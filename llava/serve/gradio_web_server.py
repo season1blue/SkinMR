@@ -398,8 +398,7 @@ def build_demo(embed_mode, cur_dir=None, concurrency_count=10):
         ).then(
             http_bot,
             [state, model_selector, temperature, top_p, max_output_tokens],
-            [state, chatbot] + btn_list,
-            concurrency_limit=concurrency_count
+            [state, chatbot] + btn_list
         )
 
         clear_btn.click(
@@ -417,8 +416,7 @@ def build_demo(embed_mode, cur_dir=None, concurrency_count=10):
         ).then(
             http_bot,
             [state, model_selector, temperature, top_p, max_output_tokens],
-            [state, chatbot] + btn_list,
-            concurrency_limit=concurrency_count
+            [state, chatbot] + btn_list
         )
 
         submit_btn.click(
@@ -428,8 +426,7 @@ def build_demo(embed_mode, cur_dir=None, concurrency_count=10):
         ).then(
             http_bot,
             [state, model_selector, temperature, top_p, max_output_tokens],
-            [state, chatbot] + btn_list,
-            concurrency_limit=concurrency_count
+            [state, chatbot] + btn_list
         )
 
         if args.model_list_mode == "once":

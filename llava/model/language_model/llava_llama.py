@@ -41,8 +41,18 @@ class LlavaLlamaModel(LlavaMetaModel, LlamaModel):
 class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
     config_class = LlavaConfig
 
-    def __init__(self, config):
-        super(LlamaForCausalLM, self).__init__(config)
+    def __init__(self, config, *args, **kwargs):
+        # Newer transformers may forward quantization/runtime kwargs to model init.
+        # This class does not consume them directly, so ignore for compatibility.
+        if isinstance(config, dict):
+            config = LlavaConfig(**config)
+
+        # HF LlavaConfig may carry text_config as a plain dict in some checkpoints.
+        # Normalize it so GenerationConfig.from_model_config can call to_dict safely.
+        if hasattr(config, "text_config") and isinstance(config.text_config, dict):
+            config.text_config = LlamaConfig(**config.text_config)
+
+        super().__init__(config)
         self.model = LlavaLlamaModel(config)
         self.pretraining_tp = config.pretraining_tp
         self.vocab_size = config.vocab_size

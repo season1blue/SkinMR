@@ -1,3 +1,5 @@
+import os
+
 import torch
 import torch.nn as nn
 
@@ -11,6 +13,7 @@ class CLIPVisionTower(nn.Module):
         self.is_loaded = False
 
         self.vision_tower_name = vision_tower
+        self.vision_tower_name = self._resolve_vision_tower_name(self.vision_tower_name)
         self.select_layer = args.mm_vision_select_layer
         self.select_feature = getattr(args, 'mm_vision_select_feature', 'patch')
 
@@ -20,6 +23,14 @@ class CLIPVisionTower(nn.Module):
             self.load_model()
         else:
             self.cfg_only = CLIPVisionConfig.from_pretrained(self.vision_tower_name)
+
+    @staticmethod
+    def _resolve_vision_tower_name(vision_tower_name):
+        # Offline fallback: map common HF identifier to an existing local model directory.
+        local_clip_dir = "/data/ssz/llms/clip-vit-large-patch14-336"
+        if vision_tower_name == "openai/clip-vit-large-patch14-336" and os.path.isdir(local_clip_dir):
+            return local_clip_dir
+        return vision_tower_name
 
     def load_model(self, device_map=None):
         if self.is_loaded:

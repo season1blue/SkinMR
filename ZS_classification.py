@@ -1,5 +1,7 @@
 import os
 import argparse
+import csv
+import math
 import pandas as pd
 import torch
 from PIL import Image
@@ -11,25 +13,29 @@ from llava.model.builder import load_pretrained_model
 from llava.mm_utils import tokenizer_image_token, get_model_name_from_path, KeywordsStoppingCriteria, process_images
 from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
 from llava.conversation import conv_templates, SeparatorStyle
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, AutoProcessor
 from llava.conversation import Conversation
+try:
+    from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5ForConditionalGeneration
+except Exception:
+    Qwen3_5ForConditionalGeneration = None
 
 from utils.eval_help import binary_metrics
 
-BASE_IMAGE_PATH = "/Dataset"
-PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION = '/Dataframe/test/classification/'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION = os.path.join(BASE_DIR, 'Dataframe', 'test', 'classification')
 
 
 def get_experiment_setting(experiment):
     if experiment == "ISIC":
-        setting = {"dataframe": PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION + "ISIC_test.csv",
+        setting = {"dataframe": os.path.join(PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION, "ISIC_test.csv"),
                    "task": "classification",
                    "targets": {"Actinic Keratosis": 0, "Basal Cell Carcinoma": 1, "Benign Keratosis-like Lesions": 2,
                                "Dermatofibroma": 3, "Melanoma": 4, "Nevus": 5, "Squamous Cell Carcinoma": 6,
                                "Vascular Lesions": 7}}
 
     elif experiment == "MSKCC":
-        setting = {"dataframe": PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION + "MSKCC_test.csv",
+        setting = {"dataframe": os.path.join(PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION, "MSKCC_test.csv"),
                    "task": "classification",
                    "targets": {"AIMP": 0, "acrochordon": 1, "actinic keratosis": 2, "angiokeratoma": 3,
                                "atypical melanocytic proliferation": 4, "basal cell carcinoma": 5,
@@ -39,43 +45,43 @@ def get_experiment_setting(experiment):
                                "squamous cell carcinoma": 18, "vascular lesion": 19, "verruca": 20}}
 
     elif experiment == "PAD":
-        setting = {"dataframe": PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION + "PAD_test.csv",
+        setting = {"dataframe": os.path.join(PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION, "PAD_test.csv"),
                    "task": "classification",
                    "targets": {"Actinic Keratosis": 0, "Basal Cell Carcinoma": 1, "Melanoma": 2, "Nevus": 3,
                                "Seborrheic Keratosis": 4, "Squamous Cell Carcinoma": 5}}
 
     elif experiment == "HIBA":
-        setting = {"dataframe": PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION + "HIBA_test.csv",
+        setting = {"dataframe": os.path.join(PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION, "HIBA_test.csv"),
                    "task": "classification",
                    "targets": {"actinic keratosis": 0, "basal cell carcinoma": 1, "dermatofibroma": 2,
                                "lichenoid keratosis": 3, "melanoma": 4, "nevus": 5, "seborrheic keratosis": 6,
                                "solar lentigo": 7, "squamous cell carcinoma": 8, "vascular lesion": 9}}
 
     elif experiment == "HIBA_2class":
-        setting = {"dataframe": PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION + "HIBA_2class_test.csv",
+        setting = {"dataframe": os.path.join(PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION, "HIBA_2class_test.csv"),
                    "task": "classification",
                    "targets": {"benign": 0, "malignant": 1}}
 
     elif experiment == "BCN20000":
-        setting = {"dataframe": PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION + "BCN20000_test.csv",
+        setting = {"dataframe": os.path.join(PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION, "BCN20000_test.csv"),
                    "task": "classification",
                    "targets": {"actinic keratosis": 0, "basal cell carcinoma": 1, "dermatofibroma": 2, "melanoma": 3,
                                "melanoma metastasis": 4, "nevus": 5, "other": 6, "scar": 7, "seborrheic keratosis": 8,
                                "solar lentigo": 9, "squamous cell carcinoma": 10, "vascular lesion": 11}}
 
     elif experiment == "Fitzpatrick":
-        setting = {"dataframe": PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION + "Fitzpatrick_test.csv",
+        setting = {"dataframe": os.path.join(PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION, "Fitzpatrick_test.csv"),
                    "task": "classification",
                    "targets": {"benign": 0, "malignant": 1, "non-neoplastic": 2}}
 
     elif experiment == "HAM10000":
-        setting = {"dataframe": PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION + "HAM10000_test.csv",
+        setting = {"dataframe": os.path.join(PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION, "HAM10000_test.csv"),
                    "task": "classification",
                    "targets": {"Actinic Keratoses": 0, "Basal Cell Carcinoma": 1, "Benign Keratosis": 2,
                                "Dermatofibroma": 3, "Melanoma": 4, "Nevus": 5, "Vascular lesions": 6}}
 
     elif experiment == "Dermnet":
-        setting = {"dataframe": PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION + "Dermnet_test.csv",
+        setting = {"dataframe": os.path.join(PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION, "Dermnet_test.csv"),
                    "task": "classification",
                    "targets": {"Acne and rosacea": 0,
                                "Actinic Keratosis Basal Cell Carcinoma and other Malignant Lesions": 1,
@@ -94,7 +100,7 @@ def get_experiment_setting(experiment):
                                "Warts Molluscum and other Viral Infections": 22}}
 
     elif experiment == "Patch16":
-        setting = {"dataframe": PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION + "Patch16_test.csv",
+        setting = {"dataframe": os.path.join(PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION, "Patch16_test.csv"),
                    "task": "classification",
                    "targets": {"nontumor skin chondraltissue": 0, "nontumor skin dermis": 1,
                                "nontumor skin elastosis": 2, "nontumor skin epidermis": 3,
@@ -105,12 +111,12 @@ def get_experiment_setting(experiment):
                                "tumor skin epithelial bcc": 12, "tumor skin epithelial sqcc": 13,
                                "tumor skin melanoma": 14, "tumor skin naevus": 15}}
     elif experiment == "Patch16_2class":
-        setting = {"dataframe": PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION + "Patch16_2class_test.csv",
+        setting = {"dataframe": os.path.join(PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION, "Patch16_2class_test.csv"),
                    "task": "classification",
                    "targets": {"nontumor": 0, "tumor": 1}}
 
     elif experiment == "DDI":
-        setting = {"dataframe": PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION + "DDI_test.csv",
+        setting = {"dataframe": os.path.join(PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION, "DDI_test.csv"),
                    "task": "classification",
                    "targets": {"Abrasions": 0, "Abscess": 1, "Acne Cystic": 2, "Acquired Digital Fibrokeratoma": 3,
                                "Acral Melanotic Macule": 4, "Acrochordon": 5, "Actinic Keratosis": 6,
@@ -138,7 +144,7 @@ def get_experiment_setting(experiment):
                                "Verruciform Xanthoma": 68, "Wart": 69, "Xanthogranuloma": 70}}
 
     elif experiment == "DDI_2class":
-        setting = {"dataframe": PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION + "DDI_2class_test.csv",
+        setting = {"dataframe": os.path.join(PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION, "DDI_2class_test.csv"),
                    "task": "classification",
                    "targets": {"Non-Malignant": 0, "Malignant": 1}}
 
@@ -162,13 +168,55 @@ def process_categories(categories):
 
     return category
 
+
+def chunked(items, chunk_size):
+    for i in range(0, len(items), chunk_size):
+        yield items[i:i + chunk_size]
+
+
+def apply_qwen_chat_template(processor, messages):
+    template_kwargs = {
+        "add_generation_prompt": True,
+        "tokenize": True,
+        "return_dict": True,
+        "return_tensors": "pt",
+    }
+    try:
+        return processor.apply_chat_template(messages, enable_thinking=True, **template_kwargs)
+    except TypeError:
+        return processor.apply_chat_template(messages, **template_kwargs)
+
 def eval_model(args):
     # 加载模型
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_path = os.path.expanduser(args.model_path)
     model_name = args.model_name
-    tokenizer, model, image_processor, context_len = load_pretrained_model(
-        model_path, args.model_base, model_name, args.load_8bit, args.load_4bit, device=device)
+    lowered_path = model_path.lower()
+    lowered_name = (model_name or "").lower()
+    is_qwen35 = (
+        "qwen3.5" in lowered_path
+        or "qwen3_5" in lowered_path
+        or "qwen3.5" in lowered_name
+        or "qwen3_5" in lowered_name
+    )
+
+    processor = None
+    if is_qwen35:
+        if AutoProcessor is None or Qwen3_5ForConditionalGeneration is None:
+            raise RuntimeError("Qwen3.5 dependencies are unavailable. Please ensure transformers550 is importable.")
+        processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+        device_map = "cuda:0" if torch.cuda.is_available() else "cpu"
+        model = Qwen3_5ForConditionalGeneration.from_pretrained(
+            model_path,
+            device_map=device_map,
+            trust_remote_code=True,
+        )
+        tokenizer = None
+        image_processor = None
+        context_len = 32768
+    else:
+        tokenizer, model, image_processor, context_len = load_pretrained_model(
+            model_path, args.model_base, model_name, args.load_8bit, args.load_4bit, device=device)
     model.eval()
 
     # 从文件获取实验设置
@@ -176,100 +224,231 @@ def eval_model(args):
     if not setting:
         raise ValueError(f"Experiment '{args.experiment}' settings are not found.")
 
+    if args.num_shards < 1:
+        raise ValueError("num_shards must be >= 1")
+    if args.shard_index < 0 or args.shard_index >= args.num_shards:
+        raise ValueError("shard_index must be in [0, num_shards)")
+
+    dataframe_path = args.dataframe if args.dataframe else setting["dataframe"]
+    if not os.path.exists(dataframe_path):
+        raise FileNotFoundError(f"Dataframe file not found: {dataframe_path}")
+
     os.makedirs(args.result_path, exist_ok=True)
-    df = pd.read_csv(setting["dataframe"])
-    predictions = []
-    ground_truths = []
-    result_file = os.path.join(args.result_path, f"{args.experiment}_predictions.csv")
+    df = pd.read_csv(dataframe_path)
+    result_file = os.path.join(args.result_path, f"{args.experiment}_predictions{args.result_suffix}.csv")
+    result_metrics_file = os.path.join(args.result_path, f"{args.experiment}_results{args.result_suffix}.csv")
+    done_images = set()
+
+    if args.num_shards > 1:
+        df = df.iloc[args.shard_index::args.num_shards].reset_index(drop=True)
+        print(f"Shard mode: shard {args.shard_index}/{args.num_shards}, rows in this shard: {len(df)}")
+
+    resume_files = [result_file]
+    base_result_file = os.path.join(args.result_path, f"{args.experiment}_predictions.csv")
+    if base_result_file != result_file:
+        resume_files.append(base_result_file)
+
     # 确保结果文件存在
     if not os.path.exists(result_file):
         result_df = pd.DataFrame(columns=["image", "question", "predicted_answer", "ground_truth", "predicted_label", "ground_truth_label"])
         result_df.to_csv(result_file, index=False)
 
+    # Resume from existing predictions files. Parse with csv.reader and trust field 0.
+    for resume_file in resume_files:
+        if not os.path.exists(resume_file):
+            continue
+        with open(resume_file, newline='', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            next(reader, None)
+            for rec in reader:
+                if rec and rec[0]:
+                    done_images.add(rec[0])
+    if done_images:
+        print(f"Resume enabled: {len(done_images)} finished samples will be skipped.")
+
     # 获取类别名称
     possible_diseases = list(setting["targets"].keys())  # 从targets中提取类别名
     label_set = list(setting["targets"].values())
     print(f"Possible diseases: {possible_diseases}", f"Label set: {label_set}")
-    # 遍历数据集
-    for idx, row in tqdm(df.iterrows(), total=df.shape[0]):
-        image_file = row["image"]
-        # ground_truth = row["categories"]  # 真正的诊断标签，格式类似 'non-malignant' 或 'malignant'
-        ground_truth = process_categories(row["categories"])
-        print(f"Image: {image_file}, Ground truth: {ground_truth}")
-        true_label = setting["targets"][ground_truth]
-        question = f"This is a skin lesion image. From the following categories: {', '.join(possible_diseases)}, which one is the diagnosis?"
-        print(f"Question: {question}")
-        image_path = os.path.join(args.image_folder, image_file)
-
-        ############## 使用模型进行推理，得到预测结果 ##############
-
+    question_text = f"This is a skin lesion image. From the following categories: {', '.join(possible_diseases)}, which one is the diagnosis?"
+    if is_qwen35:
+        question = question_text
+        input_ids_template = None
+    else:
         if model.config.mm_use_im_start_end:
-            question = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + '\n' + question
-            print(question)
+            question = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + '\n' + question_text
         else:
-            question = DEFAULT_IMAGE_TOKEN + '\n' + question
-            # print(question)
+            question = DEFAULT_IMAGE_TOKEN + '\n' + question_text
+
         conv = conv_templates[args.conv_mode].copy()
         conv.append_message(conv.roles[0], question)
         conv.append_message(conv.roles[1], None)
         prompt = conv.get_prompt()
+        input_ids_template = tokenizer_image_token(
+            prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt'
+        ).unsqueeze(0).to(device)
 
-        input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda().to(device)
+    pending_samples = []
+    for _, row in df.iterrows():
+        image_file = row["image"]
+        if image_file in done_images:
+            continue
 
-        image = Image.open(os.path.join(args.image_folder, image_file)).convert('RGB')
-        image_size = image.size
-        # print(image_size)
-        image_tensor = process_images([image], image_processor, model.config)[0].to(device)
-        with torch.inference_mode():
-            output_ids = model.generate(
-                input_ids,
-                images=image_tensor.unsqueeze(0).half().cuda(),
-                do_sample=True,
-                temperature=args.temperature,
-                top_p=args.top_p,
-                num_beams=args.num_beams,
-                min_new_tokens=1,
-                max_new_tokens=256,
-                pad_token_id=tokenizer.eos_token_id,
-                # image_sizes=[image_size],
-                use_cache=True)
+        ground_truth = process_categories(row["categories"])
+        true_label = setting["targets"][ground_truth]
+        image_path = os.path.join(args.image_folder, image_file)
+        if not os.path.exists(image_path) and "_downsampled" in image_file:
+            image_path = os.path.join(args.image_folder, image_file.replace("_downsampled", ""))
+        if not os.path.exists(image_path):
+            continue
 
-        predicted_answer = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
-        print(predicted_answer)
-        # 提取诊断类别并与目标匹配
-        predicted_diagnosis = None
-        # 如果模型输出actinic keratosis，但实际诊断是Actinic Keratosis，也应该被视为匹配Actinic Keratoses，先进行大小写转换
-        predicted_answer = predicted_answer.replace("actinic keratosis", "actinic keratoses")
-        for disease in possible_diseases:
-            if disease.lower() in predicted_answer.lower():
-                predicted_diagnosis = disease
-                break
-
-        if predicted_diagnosis:
-            predicted_label = setting["targets"][predicted_diagnosis]
-        else:
-            predicted_label = -1  # 如果无法匹配诊断，则设置为-1
-
-        # 将预测值和真实值保存
-        predictions.append(predicted_label)
-        ground_truths.append(setting["targets"][ground_truth])
-
-        # 保存当前样本的结果到CSV
-        new_data = pd.DataFrame({
-            "image": [image_file],
-            "question": [question],
-            "output": [predicted_answer],
-            "predicted_answer": [predicted_diagnosis],
-            "ground_truth": [ground_truth],
-            "predicted_label": [predicted_label],
-            "ground_truth_label": [true_label]
+        pending_samples.append({
+            "image": image_file,
+            "image_path": image_path,
+            "ground_truth": ground_truth,
+            "true_label": true_label
         })
-        new_data.to_csv(result_file, mode='a', header=False, index=False)
+
+    print(f"Samples to process in this run: {len(pending_samples)}")
+
+    total_batches = math.ceil(len(pending_samples) / args.batch_size) if pending_samples else 0
+    for batch_idx, batch_samples in enumerate(
+        tqdm(chunked(pending_samples, args.batch_size), total=total_batches),
+        start=1,
+    ):
+        if total_batches and (
+            batch_idx == 1
+            or batch_idx == total_batches
+            or batch_idx % args.progress_every == 0
+        ):
+            print(
+                f"[progress] shard={args.shard_index}/{args.num_shards} batch={batch_idx}/{total_batches}",
+                flush=True,
+            )
+
+        valid_samples = []
+        images = []
+        for sample in batch_samples:
+            try:
+                with Image.open(sample["image_path"]) as img:
+                    images.append(img.convert('RGB'))
+                valid_samples.append(sample)
+            except Exception:
+                continue
+
+        if not valid_samples:
+            continue
+
+        if is_qwen35:
+            decoded_answers = []
+            with torch.inference_mode():
+                for sample in valid_samples:
+                    messages = [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image", "path": sample["image_path"]},
+                                {"type": "text", "text": question_text},
+                            ],
+                        }
+                    ]
+                    inputs = apply_qwen_chat_template(processor, messages).to(device)
+                    generate_kwargs = {
+                        "max_new_tokens": args.max_new_tokens,
+                        "do_sample": args.do_sample,
+                        "num_beams": args.num_beams,
+                        "pad_token_id": processor.tokenizer.eos_token_id,
+                    }
+                    if args.do_sample:
+                        generate_kwargs["temperature"] = args.temperature
+                        generate_kwargs["top_p"] = args.top_p
+
+                    output_ids = model.generate(**inputs, **generate_kwargs)
+                    output_ids_trimmed = [
+                        out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs["input_ids"], output_ids)
+                    ]
+                    decoded = processor.batch_decode(
+                        output_ids_trimmed,
+                        skip_special_tokens=True,
+                        clean_up_tokenization_spaces=False,
+                    )[0]
+                    decoded_answers.append(decoded)
+        else:
+            image_inputs = process_images(images, image_processor, model.config)
+            if isinstance(image_inputs, list):
+                image_inputs = [img.to(device=device, dtype=torch.float16) for img in image_inputs]
+            else:
+                image_inputs = image_inputs.to(device=device, dtype=torch.float16)
+
+            input_ids = input_ids_template.repeat(len(valid_samples), 1)
+
+            generate_kwargs = {
+                "images": image_inputs,
+                "do_sample": args.do_sample,
+                "num_beams": args.num_beams,
+                "min_new_tokens": 1,
+                "max_new_tokens": args.max_new_tokens,
+                "pad_token_id": tokenizer.eos_token_id,
+                "use_cache": True,
+            }
+            if args.do_sample:
+                generate_kwargs["temperature"] = args.temperature
+                generate_kwargs["top_p"] = args.top_p
+
+            with torch.inference_mode():
+                output_ids = model.generate(input_ids, **generate_kwargs)
+
+            decoded_answers = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+        rows_to_write = []
+        for sample, predicted_answer in zip(valid_samples, decoded_answers):
+            predicted_answer = predicted_answer.strip().replace("actinic keratosis", "actinic keratoses")
+            predicted_diagnosis = None
+            for disease in possible_diseases:
+                if disease.lower() in predicted_answer.lower():
+                    predicted_diagnosis = disease
+                    break
+
+            if predicted_diagnosis:
+                predicted_label = setting["targets"][predicted_diagnosis]
+            else:
+                predicted_label = -1
+
+            rows_to_write.append({
+                "image": sample["image"],
+                "question": question,
+                "predicted_answer": predicted_diagnosis,
+                "ground_truth": sample["ground_truth"],
+                "predicted_label": predicted_label,
+                "ground_truth_label": sample["true_label"]
+            })
+
+        if rows_to_write:
+            pd.DataFrame(rows_to_write).to_csv(result_file, mode='a', header=False, index=False)
+
+    # Recompute metrics from the full predictions file (supports resumed runs).
+    predictions = []
+    ground_truths = []
+    with open(result_file, newline='', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        next(reader, None)
+        for rec in reader:
+            if len(rec) < 2:
+                continue
+            try:
+                pred = int(rec[-2])
+                gt = int(rec[-1])
+            except ValueError:
+                continue
+            predictions.append(pred)
+            ground_truths.append(gt)
+
+    if not predictions:
+        print("No valid prediction rows found. Metrics file will not be generated.")
+        return
 
     res = binary_metrics(ground_truths, predictions, label_set)
     df = pd.DataFrame([res])
-    path = os.path.join(args.result_path, f"{args.experiment}_results.csv")
-    df.to_csv(path, index=False)
+    df.to_csv(result_metrics_file, index=False)
     print(f"Predictions saved to {result_file}")
 
 
@@ -281,11 +460,18 @@ if __name__ == "__main__":
     parser.add_argument("--model-name", type=str, default="LlavaMistralForCausalLM")
     parser.add_argument("--load-8bit", type=bool, default=False, help="Load model with 8-bit precision")
     parser.add_argument("--load-4bit", type=bool, default=False, help="Load model with 4-bit precision")
+    parser.add_argument("--do-sample", action="store_true", help="Enable sampling for generation")
     parser.add_argument("--temperature", type=float, default=0.5, help="Temperature for sampling")
     parser.add_argument("--top_p", type=float, default=0.9, help="Top-p sampling")
-    parser.add_argument("--num_beams", type=int, default=5, help="Number of beams for beam search")
+    parser.add_argument("--num_beams", type=int, default=1, help="Number of beams for beam search")
+    parser.add_argument("--max-new-tokens", type=int, default=32, help="Maximum generated tokens per sample")
+    parser.add_argument("--batch-size", type=int, default=8, help="Batch size for inference")
+    parser.add_argument("--num-shards", type=int, default=1, help="Total number of dataset shards")
+    parser.add_argument("--shard-index", type=int, default=0, help="Current shard index")
+    parser.add_argument("--result-suffix", type=str, default="", help="Suffix for output files, e.g. _g0")
+    parser.add_argument("--progress-every", type=int, default=5, help="Print explicit progress every N batches")
     parser.add_argument("--image-folder", type=str, default="Dataset", help="Folder containing images")
-    # parser.add_argument("--dataset-file", type=str, default="/home/user6/LLaVA/vqa_test_dataset.csv", help="Test dataset file (CSV)")
+    parser.add_argument("--dataframe", type=str, default="", help="Optional CSV path to override experiment default dataframe")
     parser.add_argument("--conv_mode", type=str, default="mistral_instruct", help="Conversation mode for prompt templates")
     parser.add_argument('--result-path', default='result/zeroshot_class/DermMM_9pubCHOICE', type=str,
                         help="File to save predictions")
