@@ -193,10 +193,7 @@ def apply_qwen_chat_template(processor, messages):
         "return_dict": True,
         "return_tensors": "pt",
     }
-    try:
-        return processor.apply_chat_template(messages, enable_thinking=True, **template_kwargs)
-    except TypeError:
-        return processor.apply_chat_template(messages, **template_kwargs)
+    return processor.apply_chat_template(messages, **template_kwargs)
 
 
 def apply_memvr_qwen25(
@@ -359,7 +356,10 @@ def eval_model(args):
     possible_diseases = list(setting["targets"].keys())  # 从targets中提取类别名
     label_set = list(setting["targets"].values())
     print(f"Possible diseases: {possible_diseases}", f"Label set: {label_set}")
-    question_text = f"This is a skin lesion image. From the following categories: {', '.join(possible_diseases)}, which one is the diagnosis?"
+    question_text = (
+        f"This is a skin lesion image. From the following categories: {', '.join(possible_diseases)}, "
+        "which one is the diagnosis? Respond using exactly one category name only."
+    )
     if is_qwen:
         question = question_text
         input_ids_template = None
@@ -490,10 +490,15 @@ def eval_model(args):
             decoded_answers = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
         rows_to_write = []
         for sample, predicted_answer in zip(valid_samples, decoded_answers):
-            predicted_answer = predicted_answer.strip().replace("actinic keratosis", "actinic keratoses")
+            normalized_answer = predicted_answer.strip().lower()
             predicted_diagnosis = None
             for disease in possible_diseases:
-                if disease.lower() in predicted_answer.lower():
+                disease_keys = {disease.lower()}
+                # Handle singular/plural naming inconsistency across datasets.
+                if disease.lower() == "actinic keratoses":
+                    disease_keys.add("actinic keratosis")
+
+                if any(disease_key in normalized_answer for disease_key in disease_keys):
                     predicted_diagnosis = disease
                     break
 

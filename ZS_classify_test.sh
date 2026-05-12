@@ -13,7 +13,7 @@ CONDA_ENV="dualpd"
 PYTHON_BIN="/home/public/miniconda3/envs/dualpd/bin/python"
 GPU_IDS=(0 1 2 3)
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IMAGE_FOLDER="${PROJECT_ROOT}/data"
+IMAGE_FOLDER="${IMAGE_FOLDER:-/mnt/data/ssz/Skin/skindata}"
 LOG_DIR="${PROJECT_ROOT}/logs"
 
 # Patch16 control

@@ -2,7 +2,7 @@
 各种路径
 """
 PATH_DATASETS = "../Datasets/FUNDUS/"      # 与项目平级的目录  A directory at the same level of the project
-PATH_RESIZED_DATASETS = "/mnc/zwq/Dataset/SkinModel_resized512/"
+PATH_RESIZED_DATASETS = "/mnt/data/ssz/Skin/skindata/"
 
 # PATH_DATAFRAME_PRETRAIN = "./local_data/dataframes/pretraining/"
 PATH_DATAFRAME_PRETRAIN = "/home/user6/SkinModel/Dataframe/Pretrain/"

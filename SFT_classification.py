@@ -42,7 +42,7 @@ from transferability.local_data.constants import *
 # from transferability.local_data.experiments import get_experiment_setting
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # 设定基本路径
-BASE_IMAGE_PATH = "/mnc/zwq/Dataset/SkinModel_resized512"
+BASE_IMAGE_PATH = "/mnt/data/ssz/Skin/skindata"
 TRAIN_PATH = "/home/user6/SkinModel/Dataframe/Pretrain"
 TEST_PATH = "/home/user6/SkinModel/Dataframe/test/classification"
 
