@@ -19,6 +19,10 @@ try:
     from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5ForConditionalGeneration
 except Exception:
     Qwen3_5ForConditionalGeneration = None
+try:
+    from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLForConditionalGeneration
+except Exception:
+    Qwen2_5_VLForConditionalGeneration = None
 
 from utils.eval_help import binary_metrics
 
@@ -199,18 +203,38 @@ def eval_model(args):
         or "qwen3.5" in lowered_name
         or "qwen3_5" in lowered_name
     )
+    is_qwen25vl = (
+        "qwen2.5-vl" in lowered_path
+        or "qwen2_5_vl" in lowered_path
+        or "qwen25vl" in lowered_path
+        or "qwen2.5-vl" in lowered_name
+        or "qwen2_5_vl" in lowered_name
+        or "qwen25vl" in lowered_name
+    )
+    is_qwen = is_qwen35 or is_qwen25vl
 
     processor = None
-    if is_qwen35:
-        if AutoProcessor is None or Qwen3_5ForConditionalGeneration is None:
-            raise RuntimeError("Qwen3.5 dependencies are unavailable. Please ensure transformers550 is importable.")
+    if is_qwen:
+        if AutoProcessor is None:
+            raise RuntimeError("AutoProcessor is unavailable. Please ensure transformers550 is importable.")
         processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
         device_map = "cuda:0" if torch.cuda.is_available() else "cpu"
-        model = Qwen3_5ForConditionalGeneration.from_pretrained(
-            model_path,
-            device_map=device_map,
-            trust_remote_code=True,
-        )
+        if is_qwen35:
+            if Qwen3_5ForConditionalGeneration is None:
+                raise RuntimeError("Qwen3.5 dependencies are unavailable. Please ensure transformers550 is importable.")
+            model = Qwen3_5ForConditionalGeneration.from_pretrained(
+                model_path,
+                device_map=device_map,
+                trust_remote_code=True,
+            )
+        else:
+            if Qwen2_5_VLForConditionalGeneration is None:
+                raise RuntimeError("Qwen2.5-VL dependencies are unavailable. Please ensure transformers550 is importable.")
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                model_path,
+                device_map=device_map,
+                trust_remote_code=True,
+            )
         tokenizer = None
         image_processor = None
         context_len = 32768
@@ -271,7 +295,7 @@ def eval_model(args):
     label_set = list(setting["targets"].values())
     print(f"Possible diseases: {possible_diseases}", f"Label set: {label_set}")
     question_text = f"This is a skin lesion image. From the following categories: {', '.join(possible_diseases)}, which one is the diagnosis?"
-    if is_qwen35:
+    if is_qwen:
         question = question_text
         input_ids_template = None
     else:
@@ -339,7 +363,7 @@ def eval_model(args):
         if not valid_samples:
             continue
 
-        if is_qwen35:
+        if is_qwen:
             decoded_answers = []
             with torch.inference_mode():
                 for sample in valid_samples:

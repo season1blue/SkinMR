@@ -1,0 +1,23 @@
+2026-05-09 07:34:33 | INFO | gradio_web_server | args: Namespace(host='0.0.0.0', port=7860, controller_url='http://127.0.0.1:10000', concurrency_count=16, model_list_mode='reload', share=False, moderate=False, embed=False)
+2026-05-09 07:34:33 | INFO | gradio_web_server | Models: []
+2026-05-09 07:34:33 | INFO | gradio_web_server | Namespace(host='0.0.0.0', port=7860, controller_url='http://127.0.0.1:10000', concurrency_count=16, model_list_mode='reload', share=False, moderate=False, embed=False)
+2026-05-09 07:34:33 | ERROR | stderr | /data/ssz/MM-Skin/llava/serve/gradio_web_server.py:352: UserWarning: `layout` parameter is deprecated, and it has no effect
+2026-05-09 07:34:33 | ERROR | stderr |   chatbot = gr.Chatbot(
+2026-05-09 07:34:33 | ERROR | stderr | Traceback (most recent call last):
+2026-05-09 07:34:33 | ERROR | stderr |   File "/home/public/miniconda3/envs/dualpd/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+2026-05-09 07:34:33 | ERROR | stderr |     return _run_code(code, main_globals, None,
+2026-05-09 07:34:33 | ERROR | stderr |   File "/home/public/miniconda3/envs/dualpd/lib/python3.10/runpy.py", line 86, in _run_code
+2026-05-09 07:34:33 | ERROR | stderr |     exec(code, run_globals)
+2026-05-09 07:34:33 | ERROR | stderr |   File "/data/ssz/MM-Skin/llava/serve/gradio_web_server.py", line 472, in <module>
+2026-05-09 07:34:33 | ERROR | stderr |     demo = build_demo(args.embed, concurrency_count=args.concurrency_count)
+2026-05-09 07:34:33 | ERROR | stderr |   File "/data/ssz/MM-Skin/llava/serve/gradio_web_server.py", line 394, in build_demo
+2026-05-09 07:34:33 | ERROR | stderr |     regenerate_btn.click(
+2026-05-09 07:34:33 | ERROR | stderr | TypeError: EventListenerMethod.__call__() got an unexpected keyword argument 'concurrency_limit'
+2026-05-09 07:35:23 | INFO | gradio_web_server | args: Namespace(host='0.0.0.0', port=7860, controller_url='http://127.0.0.1:10000', concurrency_count=16, model_list_mode='reload', share=False, moderate=False, embed=False)
+2026-05-09 07:35:23 | INFO | gradio_web_server | Models: []
+2026-05-09 07:35:23 | INFO | gradio_web_server | Namespace(host='0.0.0.0', port=7860, controller_url='http://127.0.0.1:10000', concurrency_count=16, model_list_mode='reload', share=False, moderate=False, embed=False)
+2026-05-09 07:35:23 | ERROR | stderr | /data/ssz/MM-Skin/llava/serve/gradio_web_server.py:352: UserWarning: `layout` parameter is deprecated, and it has no effect
+2026-05-09 07:35:23 | ERROR | stderr |   chatbot = gr.Chatbot(
+2026-05-09 07:35:24 | INFO | stdout | Running on local URL:  http://0.0.0.0:7860
+2026-05-09 07:35:24 | INFO | stdout | 
+2026-05-09 07:35:24 | INFO | stdout | To create a public link, set `share=True` in `launch()`.

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Interface-only config: set model and dataset keys.
-# Supported LLM_KEY: skinvl_pubmm, llavamed, qwen3_5
+# Supported LLM_KEY: skinvl_pubmm, llavamed, qwen3_5, qwen25vl
 # Supported DATASET_KEY: patch16_2class, ham10k, pad
 LLM_KEY="skinvl_pubmm"
 DATASET_KEY="pad"
@@ -34,9 +34,12 @@ case "$LLM_KEY" in
     qwen3_5)
         WEIGHTSPATH="/data/ssz/llms/Qwen3.5-9B"
         ;;
+    qwen25vl)
+        WEIGHTSPATH="/data/ssz/llms/Qwen2.5-VL-7B-Instruct"
+        ;;
     *)
         echo "Unsupported LLM_KEY: $LLM_KEY"
-        echo "Supported: skinvl_pubmm, llavamed, qwen3_5"
+        echo "Supported: skinvl_pubmm, llavamed, qwen3_5, qwen25vl"
         exit 1
         ;;
 esac
