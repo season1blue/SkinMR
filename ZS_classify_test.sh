@@ -6,6 +6,7 @@ set -euo pipefail
 # Supported DATASET_KEY: patch16_2class, ham10k, pad
 LLM_KEY="skinvl_pubmm"
 DATASET_KEY="pad"
+METHOD="base"  # qwen25vl supports: base, memvr, evo
 
 # Runtime config
 CONDA_ENV="dualpd"
@@ -13,6 +14,11 @@ PYTHON_BIN="/home/public/miniconda3/envs/dualpd/bin/python"
 GPU_IDS=(0 1 2 3)
 IMAGE_FOLDER="/data/ssz/skinmr/data"
 LOG_DIR="/data/ssz/MM-Skin/logs"
+
+# Patch16 control
+PATCH16_USE_SUBSET=1
+PATCH16_SUBSET_CSV="/data/ssz/MM-Skin/Dataframe/test/classification/Patch16_2class_test_10pct_seed42.csv"
+PATCH16_FULL_CSV="/data/ssz/MM-Skin/Dataframe/test/classification/Patch16_2class_test.csv"
 
 # Throughput controls
 BATCH_SIZE=96
@@ -22,6 +28,16 @@ DO_SAMPLE=0
 TEMPERATURE=0.5
 TOP_P=0.9
 FORCE_RERUN=1
+
+# MemVR controls (effective when METHOD=memvr/evo on qwen25vl)
+STARTING_LAYER=5
+ENDING_LAYER=16
+ENTROPY_THRESHOLD=0.75
+RETRACING_RATIO=0.0
+RETRACE_DELAY_LAYERS=1
+RETRACE_TARGET_LAYERS=""
+STATE_DRIFT_THRESHOLD=0.5
+STATE_DRIFT_POOLING="mean"
 
 
 case "$LLM_KEY" in
@@ -47,7 +63,11 @@ esac
 case "$DATASET_KEY" in
     patch16_2class)
         EXP="Patch16_2class"
-        DATAFRAME_OVERRIDE="/data/ssz/MM-Skin/Dataframe/test/classification/Patch16_2class_test.csv"
+        if [[ "$PATCH16_USE_SUBSET" -eq 1 ]]; then
+            DATAFRAME_OVERRIDE="$PATCH16_SUBSET_CSV"
+        else
+            DATAFRAME_OVERRIDE="$PATCH16_FULL_CSV"
+        fi
         ;;
     ham10k)
         EXP="HAM10000"
@@ -79,6 +99,7 @@ export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
 echo "LLM_KEY=$LLM_KEY"
 echo "DATASET_KEY=$DATASET_KEY"
+echo "METHOD=$METHOD"
 echo "MODEL_PATH=$WEIGHTSPATH"
 echo "DATAFRAME=$DATAFRAME_OVERRIDE"
 echo "OUTPATH=$OUTPATH"
@@ -104,6 +125,15 @@ for EXP in "$EXP"; do
         --batch-size "$BATCH_SIZE"
         --num_beams "$NUM_BEAMS"
         --max-new-tokens "$MAX_NEW_TOKENS"
+        --method "$METHOD"
+        --starting-layer "$STARTING_LAYER"
+        --ending-layer "$ENDING_LAYER"
+        --entropy-threshold "$ENTROPY_THRESHOLD"
+        --retracing-ratio "$RETRACING_RATIO"
+        --retrace-delay-layers "$RETRACE_DELAY_LAYERS"
+        --retrace-target-layers "$RETRACE_TARGET_LAYERS"
+        --state-drift-threshold "$STATE_DRIFT_THRESHOLD"
+        --state-drift-pooling "$STATE_DRIFT_POOLING"
     )
 
     if [[ "$DO_SAMPLE" -eq 1 ]]; then

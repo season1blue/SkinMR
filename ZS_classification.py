@@ -23,6 +23,14 @@ try:
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLForConditionalGeneration
 except Exception:
     Qwen2_5_VLForConditionalGeneration = None
+try:
+    from transformers550 import AutoProcessor as AutoProcessor550
+except Exception:
+    AutoProcessor550 = None
+try:
+    from transformers550.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLForConditionalGeneration as Qwen2_5_VLForConditionalGeneration550
+except Exception:
+    Qwen2_5_VLForConditionalGeneration550 = None
 
 from utils.eval_help import binary_metrics
 
@@ -190,6 +198,34 @@ def apply_qwen_chat_template(processor, messages):
     except TypeError:
         return processor.apply_chat_template(messages, **template_kwargs)
 
+
+def apply_memvr_qwen25(
+    model,
+    starting_layer,
+    ending_layer,
+    entropy_threshold,
+    retracing_ratio,
+    retrace_delay_layers=1,
+    retrace_target_layers="",
+    method="memvr",
+    state_drift_threshold=0.5,
+    state_drift_pooling="mean",
+):
+    # MemVR kernels live in the local transformers550 qwen2.5vl implementation.
+    model.model.language_model.lm_head = model.lm_head
+    mlp0 = model.model.language_model.layers[0].mlp
+    mlp0.apply_memvr = True
+    mlp0.starting_layer = int(starting_layer)
+    mlp0.ending_layer = int(ending_layer)
+    mlp0.entropy_threshold = float(entropy_threshold)
+    mlp0.retrace_delay_layers = max(1, int(retrace_delay_layers))
+    mlp0.retrace_target_layers = retrace_target_layers
+    mlp0.memvr_method = str(method)
+    mlp0.state_drift_threshold = float(state_drift_threshold)
+    mlp0.state_drift_pooling = str(state_drift_pooling)
+    for layer in model.model.language_model.layers:
+        layer.mlp.retracing_ratio = float(retracing_ratio)
+
 def eval_model(args):
     # 加载模型
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -212,12 +248,15 @@ def eval_model(args):
         or "qwen25vl" in lowered_name
     )
     is_qwen = is_qwen35 or is_qwen25vl
+    method = (args.method or "base").lower()
+    use_local_qwen25 = is_qwen25vl and method in {"memvr", "evo"}
 
     processor = None
     if is_qwen:
-        if AutoProcessor is None:
-            raise RuntimeError("AutoProcessor is unavailable. Please ensure transformers550 is importable.")
-        processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+        processor_cls = AutoProcessor550 if (use_local_qwen25 and AutoProcessor550 is not None) else AutoProcessor
+        if processor_cls is None:
+            raise RuntimeError("AutoProcessor is unavailable. Please ensure dependencies are importable.")
+        processor = processor_cls.from_pretrained(model_path, trust_remote_code=True)
         device_map = "cuda:0" if torch.cuda.is_available() else "cpu"
         if is_qwen35:
             if Qwen3_5ForConditionalGeneration is None:
@@ -228,13 +267,39 @@ def eval_model(args):
                 trust_remote_code=True,
             )
         else:
-            if Qwen2_5_VLForConditionalGeneration is None:
-                raise RuntimeError("Qwen2.5-VL dependencies are unavailable. Please ensure transformers550 is importable.")
-            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            if use_local_qwen25:
+                if Qwen2_5_VLForConditionalGeneration550 is None:
+                    raise RuntimeError("Qwen2.5-VL MemVR requires local transformers550 implementation.")
+                print("[qwen25vl] method=memvr/evo -> using local transformers550 implementation", flush=True)
+                qwen25_cls = Qwen2_5_VLForConditionalGeneration550
+            else:
+                if Qwen2_5_VLForConditionalGeneration is None:
+                    raise RuntimeError("Qwen2.5-VL dependencies are unavailable. Please ensure transformers is importable.")
+                qwen25_cls = Qwen2_5_VLForConditionalGeneration
+            model = qwen25_cls.from_pretrained(
                 model_path,
                 device_map=device_map,
                 trust_remote_code=True,
             )
+
+            if method in {"memvr", "evo"}:
+                apply_memvr_qwen25(
+                    model=model,
+                    starting_layer=args.starting_layer,
+                    ending_layer=args.ending_layer,
+                    entropy_threshold=args.entropy_threshold,
+                    retracing_ratio=args.retracing_ratio,
+                    retrace_delay_layers=args.retrace_delay_layers,
+                    retrace_target_layers=args.retrace_target_layers,
+                    method=method,
+                    state_drift_threshold=args.state_drift_threshold,
+                    state_drift_pooling=args.state_drift_pooling,
+                )
+            else:
+                try:
+                    model.model.language_model.layers[0].mlp.apply_memvr = False
+                except Exception:
+                    pass
         tokenizer = None
         image_processor = None
         context_len = 32768
@@ -489,6 +554,16 @@ if __name__ == "__main__":
     parser.add_argument("--top_p", type=float, default=0.9, help="Top-p sampling")
     parser.add_argument("--num_beams", type=int, default=1, help="Number of beams for beam search")
     parser.add_argument("--max-new-tokens", type=int, default=32, help="Maximum generated tokens per sample")
+    parser.add_argument("--method", type=str, default="base", choices=["base", "memvr", "evo"],
+                        help="Qwen2.5-VL inference method")
+    parser.add_argument("--starting-layer", type=int, default=5, help="MemVR start layer")
+    parser.add_argument("--ending-layer", type=int, default=16, help="MemVR end layer")
+    parser.add_argument("--entropy-threshold", type=float, default=0.75, help="MemVR entropy threshold")
+    parser.add_argument("--retracing-ratio", type=float, default=0.0, help="MemVR retracing ratio")
+    parser.add_argument("--retrace-delay-layers", type=int, default=1, help="MemVR retrace delay layers")
+    parser.add_argument("--retrace-target-layers", type=str, default="", help="MemVR retrace target layers")
+    parser.add_argument("--state-drift-threshold", type=float, default=0.5, help="MemVR state drift threshold")
+    parser.add_argument("--state-drift-pooling", type=str, default="mean", help="MemVR state drift pooling")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size for inference")
     parser.add_argument("--num-shards", type=int, default=1, help="Total number of dataset shards")
     parser.add_argument("--shard-index", type=int, default=0, help="Current shard index")
