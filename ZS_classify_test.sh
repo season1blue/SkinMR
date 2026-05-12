@@ -12,13 +12,14 @@ METHOD="base"  # qwen25vl supports: base, memvr, evo
 CONDA_ENV="dualpd"
 PYTHON_BIN="/home/public/miniconda3/envs/dualpd/bin/python"
 GPU_IDS=(0 1 2 3)
-IMAGE_FOLDER="/data/ssz/skinmr/data"
-LOG_DIR="/data/ssz/MM-Skin/logs"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGE_FOLDER="${PROJECT_ROOT}/data"
+LOG_DIR="${PROJECT_ROOT}/logs"
 
 # Patch16 control
 PATCH16_USE_SUBSET=1
-PATCH16_SUBSET_CSV="/data/ssz/MM-Skin/Dataframe/test/classification/Patch16_2class_test_10pct_seed42.csv"
-PATCH16_FULL_CSV="/data/ssz/MM-Skin/Dataframe/test/classification/Patch16_2class_test.csv"
+PATCH16_SUBSET_CSV="${PROJECT_ROOT}/Dataframe/test/classification/Patch16_2class_test_10pct_seed42.csv"
+PATCH16_FULL_CSV="${PROJECT_ROOT}/Dataframe/test/classification/Patch16_2class_test.csv"
 
 # Throughput controls
 BATCH_SIZE=96
@@ -71,11 +72,11 @@ case "$DATASET_KEY" in
         ;;
     ham10k)
         EXP="HAM10000"
-        DATAFRAME_OVERRIDE="/data/ssz/MM-Skin/Dataframe/test/classification/HAM10K_ISIC2018_test.csv"
+        DATAFRAME_OVERRIDE="${PROJECT_ROOT}/Dataframe/test/classification/HAM10K_ISIC2018_test.csv"
         ;;
     pad)
         EXP="PAD"
-        DATAFRAME_OVERRIDE="/data/ssz/MM-Skin/Dataframe/test/classification/PAD_test.csv"
+        DATAFRAME_OVERRIDE="${PROJECT_ROOT}/Dataframe/test/classification/PAD_test.csv"
         ;;
     *)
         echo "Unsupported DATASET_KEY: $DATASET_KEY"
