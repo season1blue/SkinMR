@@ -121,6 +121,10 @@ class Qwen2_5_VLMLP(nn.Module):
         output = self.down_proj(self.act_fn(gate_output) * up_output)
         
         if getattr(self, "adpt_sign", 0) == 1:
+            retracing_ratio = float(getattr(self, "retracing_ratio", 0.0))
+            if retracing_ratio <= 0.0:
+                return output
+
             adpt_w1 = getattr(self, "adpt_w1", None)
             adpt_w2 = getattr(self, "adpt_w2", None)
             if adpt_w1 is not None and adpt_w2 is not None:
@@ -141,7 +145,6 @@ class Qwen2_5_VLMLP(nn.Module):
 
                 eps = 1e-6
                 norm_scale = torch.mean(torch.abs(output)) / (torch.mean(torch.abs(adapter_out)) + eps)
-                retracing_ratio = float(getattr(self, "retracing_ratio", 0.0))
                 return output * (1 - retracing_ratio) + norm_scale * adapter_out * retracing_ratio
 
         return output
@@ -920,9 +923,14 @@ class Qwen2MLP(nn.Module):
             down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
         elif self.adpt_sign == 1:
             ffn_out = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+            retracing_ratio = float(getattr(self, "retracing_ratio", 0.0))
+            if retracing_ratio <= 0.0:
+                return ffn_out
+
             adapter_out = torch.matmul(torch.matmul(x, self.adpt_w1.T), self.adpt_w2)
-            norm_adapter_out = (torch.mean(torch.abs(ffn_out)) / torch.mean(torch.abs((adapter_out)))) * adapter_out
-            return (ffn_out*(1-self.retracing_ratio) + norm_adapter_out*self.retracing_ratio)
+            eps = 1e-6
+            norm_adapter_out = (torch.mean(torch.abs(ffn_out)) / (torch.mean(torch.abs(adapter_out)) + eps)) * adapter_out
+            return (ffn_out * (1 - retracing_ratio) + norm_adapter_out * retracing_ratio)
 
         return down_proj
 
@@ -1108,7 +1116,8 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 **kwargs,
             )
 
-            if method in {"memvr", "evo"} and image_token_mask is not None:
+            if method == "evo" and image_token_mask is not None:
+                # Evo traces direction changes on per-layer image states.
                 dynamic_visual_token = hidden_states[image_token_mask]
 
             if method == "evo" and image_token_mask is not None and hidden_states.dim() == 3:
@@ -1160,18 +1169,17 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 top_k_scores, _ = torch.topk(logits, top_k)
                 probabilities = F.softmax(top_k_scores, dim=-1)
                 entropy_base = torch.log(torch.tensor(float(max(top_k, 2)), device=probabilities.device))
-                entropy = torch.sum((-probabilities * torch.log(probabilities + 1e-12)) / entropy_base)
-                entropy_value = float(entropy.item())
+                entropy_per_sample = torch.sum(
+                    (-probabilities * torch.log(probabilities + 1e-12)) / entropy_base,
+                    dim=-1,
+                )
+                entropy_value = float(entropy_per_sample.mean().item())
 
             if layer == pending_reset_layer:
                 current_mlp = self.layers[layer].mlp
                 current_mlp.adpt_sign = 0
-                if dynamic_visual_token is not None:
-                    current_mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(dynamic_visual_token))
-                    current_mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(dynamic_visual_token.T))
-                else:
-                    current_mlp.adpt_w1 = None
-                    current_mlp.adpt_w2 = None
+                current_mlp.adpt_w1 = None
+                current_mlp.adpt_w2 = None
                 pending_reset_layer = -1
 
             if use_explicit_layers and layer in retrace_target_layers:
@@ -1211,7 +1219,8 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                 next_mlp.adpt_sign = 1
                 pending_reset_layer = layer + retrace_delay_layers
 
-                adapter_seed = dynamic_visual_token
+                # MemVR should inject original visual token; Evo injects current layer image state.
+                adapter_seed = visual_token if method == "memvr" else dynamic_visual_token
                 if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() > 2:
                     adapter_seed = adapter_seed[0]
                 if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() == 1:
@@ -1262,6 +1271,7 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
         self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(config.vision_config)
         self.language_model = Qwen2_5_VLTextModel._from_config(config.text_config)
         self.rope_deltas = None  # cache rope_deltas here
+        self._memvr_cached_visual_token = None
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -1629,12 +1639,19 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
         if vision_token is not None:
             if vision_token.dim() > 2:
                 vision_token = vision_token[0]
+            self._memvr_cached_visual_token = vision_token
             # Inject into the instantiated first MLP layer for MemVR retracing.
             first_mlp = self.language_model.layers[0].mlp
             first_mlp.visual_token = vision_token # torch.Size([60, 3584])
         else:
             first_mlp = self.language_model.layers[0].mlp
-            first_mlp.visual_token = None
+            if past_key_values is not None and self._memvr_cached_visual_token is not None:
+                # During cached decoding, pixel values are intentionally not re-forwarded.
+                # Keep the original visual token so MemVR can still retrace with image context.
+                first_mlp.visual_token = self._memvr_cached_visual_token
+            else:
+                first_mlp.visual_token = None
+                self._memvr_cached_visual_token = None
 
         if position_ids is None:
             position_ids = self.compute_3d_position_ids(

@@ -148,6 +148,12 @@ class LlavaMetaForCausalLM(ABC):
     ):
         vision_tower = self.get_vision_tower()
         if vision_tower is None or images is None or input_ids.shape[1] == 1:
+            try:
+                if past_key_values is not None:
+                    from llava.memvr_llava import restore_cached_visual_token
+                    restore_cached_visual_token(self)
+            except Exception:
+                pass
             return input_ids, position_ids, attention_mask, past_key_values, None, labels
 
         if type(images) is list or images.ndim == 5:
@@ -229,10 +235,12 @@ class LlavaMetaForCausalLM(ABC):
         new_input_embeds = []
         new_labels = []
         cur_image_idx = 0
+        cached_visual_token = None
         for batch_idx, cur_input_ids in enumerate(input_ids):
             num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()
             if num_images == 0:
                 cur_image_features = image_features[cur_image_idx]
+                cached_visual_token = cur_image_features
                 cur_input_embeds_1 = self.get_model().embed_tokens(cur_input_ids)
                 cur_input_embeds = torch.cat([cur_input_embeds_1, cur_image_features[0:0]], dim=0)
                 new_input_embeds.append(cur_input_embeds)
@@ -260,6 +268,7 @@ class LlavaMetaForCausalLM(ABC):
                     # print("num_images:",num_images)
                     # print("cur_image_idx:", cur_image_idx)
                     cur_image_features = image_features[cur_image_idx]
+                    cached_visual_token = cur_image_features
                     cur_image_idx += 1
                     cur_new_input_embeds.append(cur_image_features)
                     cur_new_labels.append(torch.full((cur_image_features.shape[0],), IGNORE_INDEX, device=cur_labels.device, dtype=cur_labels.dtype))
@@ -322,6 +331,14 @@ class LlavaMetaForCausalLM(ABC):
 
         if _position_ids is None:
             position_ids = None
+
+        try:
+            if cached_visual_token is None and len(image_features) > 0:
+                cached_visual_token = image_features[0]
+            from llava.memvr_llava import set_cached_visual_token
+            set_cached_visual_token(self, cached_visual_token)
+        except Exception:
+            pass
 
         return None, position_ids, attention_mask, past_key_values, new_input_embeds, new_labels
 

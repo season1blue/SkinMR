@@ -16,9 +16,17 @@ from llava.conversation import conv_templates, SeparatorStyle
 from transformers import AutoTokenizer, AutoModel, AutoProcessor
 from llava.conversation import Conversation
 try:
+    from llava.memvr_llava import apply_memvr_llava
+except Exception:
+    apply_memvr_llava = None
+try:
     from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5ForConditionalGeneration
 except Exception:
     Qwen3_5ForConditionalGeneration = None
+try:
+    from transformers550.models.qwen3_5.modeling_qwen3_5 import Qwen3_5ForConditionalGeneration as Qwen3_5ForConditionalGeneration550
+except Exception:
+    Qwen3_5ForConditionalGeneration550 = None
 try:
     from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLForConditionalGeneration
 except Exception:
@@ -34,10 +42,38 @@ except Exception:
 
 from utils.eval_help import binary_metrics
 
+import ipdb
+
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION = os.path.join(BASE_DIR, 'Dataframe', 'test', 'classification')
 
 
+def _collect_memvr_debug_row(model):
+    debug = getattr(model, "_memvr_debug_info", {})
+    if not isinstance(debug, dict):
+        debug = {}
+    entropy_trace = debug.get("entropy_trace")
+    if isinstance(entropy_trace, list):
+        entropy_trace_len = len(entropy_trace)
+    else:
+        entropy_trace_len = 0
+    return {
+        "memvr_runtime_enabled": getattr(model, "_llava_memvr_enabled", None),
+        "memvr_has_debug_attr": hasattr(model, "_memvr_debug_info"),
+        "memvr_enabled": debug.get("enabled"),
+        "memvr_triggered": debug.get("triggered"),
+        "memvr_injection_success": debug.get("injection_success"),
+        "memvr_trigger_layer": debug.get("trigger_layer"),
+        "memvr_target_layer": debug.get("target_layer"),
+        "memvr_trigger_metric": debug.get("trigger_metric"),
+        "memvr_trigger_value": debug.get("trigger_value"),
+        "memvr_trigger_source": debug.get("trigger_source"),
+        "memvr_used_dynamic_visual_token": debug.get("used_dynamic_visual_token"),
+        "memvr_entropy_trace_len": entropy_trace_len,
+        "memvr_last_entropy": getattr(model, "_memvr_last_entropy", None),
+        "memvr_last_target_layer": getattr(model, "_memvr_last_target_layer", None),
+    }
 def get_experiment_setting(experiment):
     if experiment == "ISIC":
         setting = {"dataframe": os.path.join(PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION, "ISIC_test.csv"),
@@ -223,6 +259,33 @@ def apply_memvr_qwen25(
     for layer in model.model.language_model.layers:
         layer.mlp.retracing_ratio = float(retracing_ratio)
 
+
+def apply_memvr_qwen35(
+    model,
+    starting_layer,
+    ending_layer,
+    entropy_threshold,
+    retracing_ratio,
+    retrace_delay_layers=1,
+    retrace_target_layers="",
+    method="memvr",
+    state_drift_threshold=0.5,
+    state_drift_pooling="mean",
+):
+    model.model.language_model.lm_head = model.lm_head
+    mlp0 = model.model.language_model.layers[0].mlp
+    mlp0.apply_memvr = True
+    mlp0.starting_layer = int(starting_layer)
+    mlp0.ending_layer = int(ending_layer)
+    mlp0.entropy_threshold = float(entropy_threshold)
+    mlp0.retrace_delay_layers = max(1, int(retrace_delay_layers))
+    mlp0.retrace_target_layers = retrace_target_layers
+    mlp0.memvr_method = str(method)
+    mlp0.state_drift_threshold = float(state_drift_threshold)
+    mlp0.state_drift_pooling = str(state_drift_pooling)
+    for layer in model.model.language_model.layers:
+        layer.mlp.retracing_ratio = float(retracing_ratio)
+
 def eval_model(args):
     # 加载模型
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -247,22 +310,49 @@ def eval_model(args):
     is_qwen = is_qwen35 or is_qwen25vl
     method = (args.method or "base").lower()
     use_local_qwen25 = is_qwen25vl and method in {"memvr", "evo"}
+    use_local_qwen35 = is_qwen35 and method in {"memvr", "evo"}
 
     processor = None
     if is_qwen:
-        processor_cls = AutoProcessor550 if (use_local_qwen25 and AutoProcessor550 is not None) else AutoProcessor
+        processor_cls = AutoProcessor550 if ((use_local_qwen25 or use_local_qwen35) and AutoProcessor550 is not None) else AutoProcessor
         if processor_cls is None:
             raise RuntimeError("AutoProcessor is unavailable. Please ensure dependencies are importable.")
         processor = processor_cls.from_pretrained(model_path, trust_remote_code=True)
         device_map = "cuda:0" if torch.cuda.is_available() else "cpu"
         if is_qwen35:
-            if Qwen3_5ForConditionalGeneration is None:
-                raise RuntimeError("Qwen3.5 dependencies are unavailable. Please ensure transformers550 is importable.")
-            model = Qwen3_5ForConditionalGeneration.from_pretrained(
+            if use_local_qwen35:
+                if Qwen3_5ForConditionalGeneration550 is None:
+                    raise RuntimeError("Qwen3.5 MemVR requires local transformers550 implementation.")
+                print("[qwen3_5] method=memvr/evo -> using local transformers550 implementation", flush=True)
+                qwen35_cls = Qwen3_5ForConditionalGeneration550
+            else:
+                if Qwen3_5ForConditionalGeneration is None:
+                    raise RuntimeError("Qwen3.5 dependencies are unavailable. Please ensure transformers is importable.")
+                qwen35_cls = Qwen3_5ForConditionalGeneration
+
+            model = qwen35_cls.from_pretrained(
                 model_path,
                 device_map=device_map,
                 trust_remote_code=True,
             )
+            if method in {"memvr", "evo"}:
+                apply_memvr_qwen35(
+                    model=model,
+                    starting_layer=args.starting_layer,
+                    ending_layer=args.ending_layer,
+                    entropy_threshold=args.entropy_threshold,
+                    retracing_ratio=args.retracing_ratio,
+                    retrace_delay_layers=args.retrace_delay_layers,
+                    retrace_target_layers=args.retrace_target_layers,
+                    method=method,
+                    state_drift_threshold=args.state_drift_threshold,
+                    state_drift_pooling=args.state_drift_pooling,
+                )
+            else:
+                try:
+                    model.model.language_model.layers[0].mlp.apply_memvr = False
+                except Exception:
+                    pass
         else:
             if use_local_qwen25:
                 if Qwen2_5_VLForConditionalGeneration550 is None:
@@ -303,6 +393,21 @@ def eval_model(args):
     else:
         tokenizer, model, image_processor, context_len = load_pretrained_model(
             model_path, args.model_base, model_name, args.load_8bit, args.load_4bit, device=device)
+        if method in {"memvr", "evo"}:
+            if apply_memvr_llava is None:
+                raise RuntimeError("LLaVA MemVR helper is unavailable. Please ensure llava.memvr_llava is importable.")
+            apply_memvr_llava(
+                model=model,
+                starting_layer=args.starting_layer,
+                ending_layer=args.ending_layer,
+                entropy_threshold=args.entropy_threshold,
+                retracing_ratio=args.retracing_ratio,
+                retrace_delay_layers=args.retrace_delay_layers,
+                retrace_target_layers=args.retrace_target_layers,
+                method=method,
+                state_drift_threshold=args.state_drift_threshold,
+                state_drift_pooling=args.state_drift_pooling,
+            )
     model.eval()
 
     # 从文件获取实验设置
@@ -336,7 +441,25 @@ def eval_model(args):
 
     # 确保结果文件存在
     if not os.path.exists(result_file):
-        result_df = pd.DataFrame(columns=["image", "question", "predicted_answer", "ground_truth", "predicted_label", "ground_truth_label"])
+        columns = ["image", "question", "predicted_answer", "ground_truth", "predicted_label", "ground_truth_label"]
+        if args.dump_memvr_debug:
+            columns.extend([
+                "memvr_runtime_enabled",
+                "memvr_has_debug_attr",
+                "memvr_enabled",
+                "memvr_triggered",
+                "memvr_injection_success",
+                "memvr_trigger_layer",
+                "memvr_target_layer",
+                "memvr_trigger_metric",
+                "memvr_trigger_value",
+                "memvr_trigger_source",
+                "memvr_used_dynamic_visual_token",
+                "memvr_entropy_trace_len",
+                "memvr_last_entropy",
+                "memvr_last_target_layer",
+            ])
+        result_df = pd.DataFrame(columns=columns)
         result_df.to_csv(result_file, index=False)
 
     # Resume from existing predictions files. Parse with csv.reader and trust field 0.
@@ -507,14 +630,17 @@ def eval_model(args):
             else:
                 predicted_label = -1
 
-            rows_to_write.append({
+            row = {
                 "image": sample["image"],
                 "question": question,
                 "predicted_answer": predicted_diagnosis,
                 "ground_truth": sample["ground_truth"],
                 "predicted_label": predicted_label,
                 "ground_truth_label": sample["true_label"]
-            })
+            }
+            if args.dump_memvr_debug and not is_qwen:
+                row.update(_collect_memvr_debug_row(model))
+            rows_to_write.append(row)
 
         if rows_to_write:
             pd.DataFrame(rows_to_write).to_csv(result_file, mode='a', header=False, index=False)
@@ -522,19 +648,17 @@ def eval_model(args):
     # Recompute metrics from the full predictions file (supports resumed runs).
     predictions = []
     ground_truths = []
-    with open(result_file, newline='', encoding='utf-8') as f:
-        reader = csv.reader(f)
-        next(reader, None)
-        for rec in reader:
-            if len(rec) < 2:
-                continue
-            try:
-                pred = int(rec[-2])
-                gt = int(rec[-1])
-            except ValueError:
-                continue
-            predictions.append(pred)
-            ground_truths.append(gt)
+    pred_df = pd.read_csv(result_file)
+    if "predicted_label" not in pred_df.columns or "ground_truth_label" not in pred_df.columns:
+        print("Prediction file is missing predicted_label/ground_truth_label columns. Metrics file will not be generated.")
+        return
+
+    for pred, gt in zip(pred_df["predicted_label"], pred_df["ground_truth_label"]):
+        try:
+            predictions.append(int(pred))
+            ground_truths.append(int(gt))
+        except (ValueError, TypeError):
+            continue
 
     if not predictions:
         print("No valid prediction rows found. Metrics file will not be generated.")
@@ -576,6 +700,7 @@ if __name__ == "__main__":
     parser.add_argument("--progress-every", type=int, default=5, help="Print explicit progress every N batches")
     parser.add_argument("--image-folder", type=str, default="Dataset", help="Folder containing images")
     parser.add_argument("--dataframe", type=str, default="", help="Optional CSV path to override experiment default dataframe")
+    parser.add_argument("--dump-memvr-debug", action="store_true", help="Write MemVR runtime debug fields to prediction CSV")
     parser.add_argument("--conv_mode", type=str, default="mistral_instruct", help="Conversation mode for prompt templates")
     parser.add_argument('--result-path', default='result/zeroshot_class/DermMM_9pubCHOICE', type=str,
                         help="File to save predictions")

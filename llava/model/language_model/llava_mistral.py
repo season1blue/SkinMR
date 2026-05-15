@@ -26,6 +26,7 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.generation.utils import GenerateOutput
 
 from ..llava_arch import LlavaMetaModel, LlavaMetaForCausalLM
+from llava.memvr_llava import prepare_memvr_step, update_memvr_entropy_from_logits
 
 
 class LlavaMistralConfig(MistralConfig):
@@ -89,7 +90,10 @@ class LlavaMistralForCausalLM(MistralForCausalLM, LlavaMetaForCausalLM):
                 image_sizes
             )
 
-        return super().forward(
+        if getattr(self, "_llava_memvr_enabled", False):
+            prepare_memvr_step(self)
+
+        outputs = super().forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -102,6 +106,11 @@ class LlavaMistralForCausalLM(MistralForCausalLM, LlavaMetaForCausalLM):
             return_dict=return_dict,
             **kwargs
         )
+
+        if getattr(self, "_llava_memvr_enabled", False):
+            update_memvr_entropy_from_logits(self, getattr(outputs, "logits", None))
+
+        return outputs
 
     @torch.no_grad()
     def generate(

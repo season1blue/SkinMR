@@ -5,13 +5,13 @@ set -euo pipefail
 # Supported LLM_KEY: skinvl_pubmm, llavamed, qwen3_5, qwen25vl
 # Supported DATASET_KEY: patch16_2class, ham10k, pad
 LLM_KEY="skinvl_pubmm"
-DATASET_KEY="pad"
-METHOD="base"  # qwen25vl supports: base, memvr, evo
+DATASET_KEY="ham10k"
+METHOD="memvr"  # SkinVL/Qwen supports: base, memvr, evo
 
 # Runtime config
 CONDA_ENV="dualpd"
-PYTHON_BIN="/home/public/miniconda3/envs/dualpd/bin/python"
-GPU_IDS=(0 1 2 3)
+PYTHON_BIN="/mnt/data/miniconda3/envs/dualpd/bin/python"
+GPU_IDS=(4)  # Set to empty array for CPU mode, or specify GPU IDs for multi-GPU
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE_FOLDER="${IMAGE_FOLDER:-/mnt/data/ssz/Skin/skindata}"
 LOG_DIR="${PROJECT_ROOT}/logs"
@@ -34,7 +34,7 @@ FORCE_RERUN=1
 STARTING_LAYER=5
 ENDING_LAYER=16
 ENTROPY_THRESHOLD=0.75
-RETRACING_RATIO=0.0
+RETRACING_RATIO=0.3
 RETRACE_DELAY_LAYERS=1
 RETRACE_TARGET_LAYERS=""
 STATE_DRIFT_THRESHOLD=0.5
@@ -43,16 +43,16 @@ STATE_DRIFT_POOLING="mean"
 
 case "$LLM_KEY" in
     skinvl_pubmm)
-        WEIGHTSPATH="/data/ssz/MM-Skin/merge/SkinVL_PubMM"
+        WEIGHTSPATH="/mnt/data/ssz/llms/SkinVL-PubMM"
         ;;
     llavamed)
-        WEIGHTSPATH="/data/ssz/llms/llava-med-v1.5-mistral-7b"
+        WEIGHTSPATH="/mnt/data/ssz/llms/llava-med-v1.5-mistral-7b"
         ;;
     qwen3_5)
-        WEIGHTSPATH="/data/ssz/llms/Qwen3.5-9B"
+        WEIGHTSPATH="/mnt/data/ssz/llms/Qwen3.5-9B"
         ;;
     qwen25vl)
-        WEIGHTSPATH="/data/ssz/llms/Qwen2.5-VL-7B-Instruct"
+        WEIGHTSPATH="/mnt/data/ssz/llms/Qwen2.5-VL-7B-Instruct"
         ;;
     *)
         echo "Unsupported LLM_KEY: $LLM_KEY"
@@ -85,7 +85,7 @@ case "$DATASET_KEY" in
         ;;
 esac
 
-OUTPATH="result/zeroshot_class/${DATASET_KEY}_${LLM_KEY}"
+OUTPATH="result/zeroshot_class/${DATASET_KEY}_${LLM_KEY}_${METHOD}"
 
 mkdir -p "$LOG_DIR"
 
