@@ -1,0 +1,33 @@
+image,attributes,categories,set
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034538.jpg,[],['Actinic Keratoses'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034553.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034562.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034616.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034634.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034667.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034671.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034676.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034700.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034703.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034749.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034831.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034858.jpg,[],['Vascular lesions'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034886.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034902.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034903.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034951.jpg,[],['Vascular lesions'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034977.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0034979.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0035073.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0035081.jpg,[],['Melanoma'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0035117.jpg,[],['Actinic Keratoses'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0035135.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0035152.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0035260.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0035298.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0035302.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0035405.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0035412.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0035428.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0035503.jpg,[],['Nevus'],Test
+HAM10K/test/images/ISIC2018_Task3_Test_Input/ISIC_0035522.jpg,[],['Melanoma'],Test

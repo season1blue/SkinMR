@@ -85,6 +85,49 @@ def _tensor_summary(tensor: Optional[torch.Tensor]):
     }
 
 
+def _get_image_token_mask(image_token_mask: Optional[torch.Tensor], hidden_states: Optional[torch.Tensor]):
+    if image_token_mask is None or not isinstance(hidden_states, torch.Tensor) or hidden_states.dim() != 3:
+        return None
+
+    img_mask = image_token_mask
+    if img_mask.dim() > 2:
+        img_mask = img_mask.squeeze(-1)
+    if img_mask.dim() != 2 or img_mask.shape[1] != hidden_states.shape[1]:
+        return None
+    return img_mask.to(device=hidden_states.device, dtype=torch.bool)
+
+
+def _extract_image_token_states(hidden_states: Optional[torch.Tensor], image_token_mask: Optional[torch.Tensor]):
+    img_mask = _get_image_token_mask(image_token_mask, hidden_states)
+    if img_mask is None or not img_mask.any():
+        return None
+    return hidden_states[img_mask]
+
+
+def _overwrite_image_token_states(
+    hidden_states: Optional[torch.Tensor],
+    image_token_mask: Optional[torch.Tensor],
+    replacement_tokens: Optional[torch.Tensor],
+    ratio: float,
+) -> Tuple[Optional[torch.Tensor], bool]:
+    img_mask = _get_image_token_mask(image_token_mask, hidden_states)
+    if img_mask is None or not img_mask.any() or replacement_tokens is None:
+        return hidden_states, False
+
+    current_tokens = hidden_states[img_mask]
+    replacement_tokens = _fit_tensor_to_shape(replacement_tokens, current_tokens.shape)
+    if replacement_tokens is None:
+        return hidden_states, False
+
+    replacement_tokens = replacement_tokens.to(device=current_tokens.device, dtype=current_tokens.dtype)
+    norm = torch.mean(torch.abs(current_tokens)) / (torch.mean(torch.abs(replacement_tokens)) + 1e-6)
+    mixed_tokens = current_tokens * (1.0 - ratio) + replacement_tokens * norm * ratio
+
+    new_hidden_states = hidden_states.clone()
+    new_hidden_states[img_mask] = mixed_tokens
+    return new_hidden_states, True
+
+
 def _ensure_mlp_forward_patch(mlp_cls):
     if getattr(mlp_cls, "_memvr_forward_patched", False):
         return
@@ -244,11 +287,14 @@ def _memvr_backbone_forward(
     state_drift_pooling = str(getattr(mlp0, "state_drift_pooling", "mean") or "mean").lower()
     image_token_mask = getattr(mlp0, "image_token_mask", None) if past_seen_tokens == 0 else None
     visual_retracing_event = False
+    pending_token_target_layer = -1
+    pending_token_seed = None
     clear_layer_idx = -1
     prev_prev_img_state = None
     prev_img_state = None
     state_drift_score = 0.0
     state_drift_ready = False
+    current_image_token_mask = None
 
     owner_ref = getattr(self, "_memvr_owner_model_ref", None)
     owner = owner_ref() if callable(owner_ref) else None
@@ -292,6 +338,21 @@ def _memvr_backbone_forward(
             }
 
     for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+        if method == "memvr" and layer == pending_token_target_layer:
+            hidden_states, token_injection_success = _overwrite_image_token_states(
+                hidden_states,
+                image_token_mask,
+                pending_token_seed,
+                retracing_ratio,
+            )
+            pending_token_target_layer = -1
+            pending_token_seed = None
+            if owner is not None:
+                owner._memvr_debug_info["injection_success"] = bool(token_injection_success)
+                owner._memvr_debug_info["injection_mode"] = "token"
+                if token_injection_success:
+                    owner._memvr_last_target_layer = int(layer)
+
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
@@ -309,21 +370,14 @@ def _memvr_backbone_forward(
             layer += 1
             continue
 
-        if method in {"memvr", "evo"} and image_token_mask is not None and hidden_states.dim() == 3:
-            img_mask = image_token_mask
-            if img_mask.dim() > 2:
-                img_mask = img_mask.squeeze(-1)
-            if img_mask.dim() == 2 and img_mask.shape[1] == hidden_states.shape[1]:
-                img_mask = img_mask.to(device=hidden_states.device, dtype=torch.bool)
-                if img_mask.any():
-                    dynamic_visual_token = hidden_states[img_mask]
+        current_image_token_mask = _get_image_token_mask(image_token_mask, hidden_states)
+
+        if method in {"memvr", "evo"}:
+            dynamic_visual_token = _extract_image_token_states(hidden_states, current_image_token_mask)
 
         if method == "evo" and image_token_mask is not None and hidden_states.dim() == 3:
-            img_mask = image_token_mask
-            if img_mask.dim() > 2:
-                img_mask = img_mask.squeeze(-1)
-            if img_mask.dim() == 2 and img_mask.shape[1] == hidden_states.shape[1]:
-                img_mask = img_mask.to(device=hidden_states.device, dtype=torch.bool)
+            img_mask = current_image_token_mask
+            if img_mask is not None:
                 valid_img_samples = img_mask.any(dim=1)
                 if valid_img_samples.any():
                     img_mask_f = img_mask.unsqueeze(-1).to(dtype=hidden_states.dtype)
@@ -378,7 +432,7 @@ def _memvr_backbone_forward(
         if method == "evo":
             trigger_hit = state_drift_ready and (state_drift_score > state_drift_threshold)
         else:
-            trigger_hit = entropy > entropy_threshold
+            trigger_hit = (current_image_token_mask is not None) and bool(current_image_token_mask.any()) and (entropy > entropy_threshold)
 
         target_layer = layer + retrace_delay_layers
         if (
@@ -391,7 +445,13 @@ def _memvr_backbone_forward(
             use_dynamic_visual = dynamic_visual_token is not None
             adapter_seed = dynamic_visual_token if use_dynamic_visual else visual_token
             trigger_source = "dynamic_visual_token" if use_dynamic_visual else "visual_token"
-            injection_success = _inject_adapter_from_visual_seed(self, target_layer, adapter_seed, retracing_ratio)
+            if method == "memvr":
+                injection_success = adapter_seed is not None
+                if injection_success:
+                    pending_token_target_layer = int(target_layer)
+                    pending_token_seed = adapter_seed
+            else:
+                injection_success = _inject_adapter_from_visual_seed(self, target_layer, adapter_seed, retracing_ratio)
             if owner is not None:
                 owner._memvr_debug_info.update({
                     "triggered": bool(trigger_hit),
@@ -401,15 +461,17 @@ def _memvr_backbone_forward(
                     "trigger_value": float(state_drift_score) if method == "evo" else float(entropy),
                     "trigger_source": trigger_source,
                     "injection_success": bool(injection_success),
+                    "injection_mode": "token" if method == "memvr" else "ffn_adapter",
                     "dynamic_visual_token": _tensor_summary(dynamic_visual_token),
                     "used_dynamic_visual_token": bool(use_dynamic_visual),
                     "adapter_seed": _tensor_summary(adapter_seed),
                 })
             if injection_success:
                 visual_retracing_event = True
-                clear_layer_idx = target_layer
-                if owner is not None:
-                    owner._memvr_last_target_layer = int(target_layer)
+                if method != "memvr":
+                    clear_layer_idx = target_layer
+                    if owner is not None:
+                        owner._memvr_last_target_layer = int(target_layer)
 
         layer += 1
 

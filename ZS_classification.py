@@ -1,6 +1,7 @@
 import os
 import argparse
 import csv
+import json
 import math
 import pandas as pd
 import torch
@@ -49,18 +50,36 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PATH_DATAFRAME_TRANSFERABILITY_CLASSIFICATION = os.path.join(BASE_DIR, 'Dataframe', 'test', 'classification')
 
 
+def _get_memvr_debug_owner(model):
+    candidates = [model]
+    nested_model = getattr(model, "model", None)
+    if nested_model is not None:
+        candidates.append(nested_model)
+        language_model = getattr(nested_model, "language_model", None)
+        if language_model is not None:
+            candidates.append(language_model)
+    for candidate in candidates:
+        debug = getattr(candidate, "_memvr_debug_info", None)
+        if isinstance(debug, dict) and debug:
+            return candidate
+    return model
+
+
 def _collect_memvr_debug_row(model):
-    debug = getattr(model, "_memvr_debug_info", {})
+    debug_owner = _get_memvr_debug_owner(model)
+    debug = getattr(debug_owner, "_memvr_debug_info", {})
     if not isinstance(debug, dict):
         debug = {}
     entropy_trace = debug.get("entropy_trace")
     if isinstance(entropy_trace, list):
         entropy_trace_len = len(entropy_trace)
+        entropy_trace_json = json.dumps(entropy_trace, ensure_ascii=True)
     else:
         entropy_trace_len = 0
+        entropy_trace_json = ""
     return {
-        "memvr_runtime_enabled": getattr(model, "_llava_memvr_enabled", None),
-        "memvr_has_debug_attr": hasattr(model, "_memvr_debug_info"),
+        "memvr_runtime_enabled": bool(debug.get("enabled", False)),
+        "memvr_has_debug_attr": hasattr(debug_owner, "_memvr_debug_info"),
         "memvr_enabled": debug.get("enabled"),
         "memvr_triggered": debug.get("triggered"),
         "memvr_injection_success": debug.get("injection_success"),
@@ -71,8 +90,9 @@ def _collect_memvr_debug_row(model):
         "memvr_trigger_source": debug.get("trigger_source"),
         "memvr_used_dynamic_visual_token": debug.get("used_dynamic_visual_token"),
         "memvr_entropy_trace_len": entropy_trace_len,
-        "memvr_last_entropy": getattr(model, "_memvr_last_entropy", None),
-        "memvr_last_target_layer": getattr(model, "_memvr_last_target_layer", None),
+        "memvr_entropy_trace": entropy_trace_json,
+        "memvr_last_entropy": getattr(debug_owner, "_memvr_last_entropy", None),
+        "memvr_last_target_layer": getattr(debug_owner, "_memvr_last_target_layer", None),
     }
 def get_experiment_setting(experiment):
     if experiment == "ISIC":
@@ -243,6 +263,9 @@ def apply_memvr_qwen25(
     method="memvr",
     state_drift_threshold=0.5,
     state_drift_pooling="mean",
+    trigger_strategy="entropy",
+    random_trigger_prob=0.5,
+    injection_mode="ffn",
 ):
     # MemVR kernels live in the local transformers550 qwen2.5vl implementation.
     model.model.language_model.lm_head = model.lm_head
@@ -256,8 +279,14 @@ def apply_memvr_qwen25(
     mlp0.memvr_method = str(method)
     mlp0.state_drift_threshold = float(state_drift_threshold)
     mlp0.state_drift_pooling = str(state_drift_pooling)
+    mlp0.trigger_strategy = str(trigger_strategy)
+    mlp0.random_trigger_prob = float(random_trigger_prob)
+    mlp0.injection_mode = str(injection_mode)
     for layer in model.model.language_model.layers:
         layer.mlp.retracing_ratio = float(retracing_ratio)
+        layer.mlp.trigger_strategy = str(trigger_strategy)
+        layer.mlp.random_trigger_prob = float(random_trigger_prob)
+        layer.mlp.injection_mode = str(injection_mode)
 
 
 def apply_memvr_qwen35(
@@ -271,6 +300,9 @@ def apply_memvr_qwen35(
     method="memvr",
     state_drift_threshold=0.5,
     state_drift_pooling="mean",
+    trigger_strategy="entropy",
+    random_trigger_prob=0.5,
+    injection_mode="ffn",
 ):
     model.model.language_model.lm_head = model.lm_head
     mlp0 = model.model.language_model.layers[0].mlp
@@ -283,11 +315,23 @@ def apply_memvr_qwen35(
     mlp0.memvr_method = str(method)
     mlp0.state_drift_threshold = float(state_drift_threshold)
     mlp0.state_drift_pooling = str(state_drift_pooling)
+    mlp0.trigger_strategy = str(trigger_strategy)
+    mlp0.random_trigger_prob = float(random_trigger_prob)
+    mlp0.injection_mode = str(injection_mode)
     for layer in model.model.language_model.layers:
         layer.mlp.retracing_ratio = float(retracing_ratio)
+        layer.mlp.trigger_strategy = str(trigger_strategy)
+        layer.mlp.random_trigger_prob = float(random_trigger_prob)
+        layer.mlp.injection_mode = str(injection_mode)
 
 def eval_model(args):
     # 加载模型
+    random.seed(args.random_seed)
+    np.random.seed(args.random_seed)
+    torch.manual_seed(args.random_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.random_seed)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_path = os.path.expanduser(args.model_path)
     model_name = args.model_name
@@ -347,6 +391,9 @@ def eval_model(args):
                     method=method,
                     state_drift_threshold=args.state_drift_threshold,
                     state_drift_pooling=args.state_drift_pooling,
+                    trigger_strategy=args.trigger_strategy,
+                    random_trigger_prob=args.random_trigger_prob,
+                    injection_mode=args.injection_mode,
                 )
             else:
                 try:
@@ -381,6 +428,9 @@ def eval_model(args):
                     method=method,
                     state_drift_threshold=args.state_drift_threshold,
                     state_drift_pooling=args.state_drift_pooling,
+                    trigger_strategy=args.trigger_strategy,
+                    random_trigger_prob=args.random_trigger_prob,
+                    injection_mode=args.injection_mode,
                 )
             else:
                 try:
@@ -456,6 +506,7 @@ def eval_model(args):
                 "memvr_trigger_source",
                 "memvr_used_dynamic_visual_token",
                 "memvr_entropy_trace_len",
+                "memvr_entropy_trace",
                 "memvr_last_entropy",
                 "memvr_last_target_layer",
             ])
@@ -638,7 +689,7 @@ def eval_model(args):
                 "predicted_label": predicted_label,
                 "ground_truth_label": sample["true_label"]
             }
-            if args.dump_memvr_debug and not is_qwen:
+            if args.dump_memvr_debug:
                 row.update(_collect_memvr_debug_row(model))
             rows_to_write.append(row)
 
@@ -693,6 +744,16 @@ if __name__ == "__main__":
     parser.add_argument("--retrace-target-layers", type=str, default="", help="MemVR retrace target layers")
     parser.add_argument("--state-drift-threshold", type=float, default=0.5, help="MemVR state drift threshold")
     parser.add_argument("--state-drift-pooling", type=str, default="mean", help="MemVR state drift pooling")
+    parser.add_argument("--trigger-strategy", type=str, default="entropy",
+                        choices=["entropy", "always", "random", "none"],
+                        help="MemVR trigger strategy for Qwen2.5/Qwen3.5 ablations")
+    parser.add_argument("--random-trigger-prob", type=float, default=0.5,
+                        help="Random trigger probability when --trigger-strategy=random")
+    parser.add_argument("--injection-mode", type=str, default="ffn",
+                        choices=["ffn", "attention", "ffn_attention", "residual"],
+                        help="Injection location ablation for Qwen2.5/Qwen3.5 MemVR")
+    parser.add_argument("--random-seed", type=int, default=42,
+                        help="Random seed for stochastic ablations such as random trigger")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size for inference")
     parser.add_argument("--num-shards", type=int, default=1, help="Total number of dataset shards")
     parser.add_argument("--shard-index", type=int, default=0, help="Current shard index")

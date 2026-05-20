@@ -24,6 +24,7 @@
 # limitations under the License.
 
 import itertools
+import random
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -897,6 +898,9 @@ class Qwen2MLP(nn.Module):
         self.memvr_method = "memvr"
         self.state_drift_threshold = 0.5
         self.state_drift_pooling = "mean"
+        self.trigger_strategy = "entropy"
+        self.random_trigger_prob = 0.5
+        self.injection_mode = "ffn"
         self.adpt_sign = 0
         self.adpt_w1 = None
         self.adpt_w2 = None
@@ -934,6 +938,72 @@ class Qwen2MLP(nn.Module):
 
         return down_proj
 
+
+def _clear_memvr_adapter(mlp):
+    mlp.adpt_sign = 0
+    mlp.adpt_w1 = None
+    mlp.adpt_w2 = None
+
+
+def _fit_adapter_seed(adapter_seed, hidden_states):
+    if adapter_seed is None:
+        return None
+    if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() > 2:
+        adapter_seed = adapter_seed[0]
+    if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() == 1:
+        adapter_seed = adapter_seed.unsqueeze(0)
+    return adapter_seed.to(dtype=hidden_states.dtype, device=hidden_states.device)
+
+
+def _inject_into_hidden_states(hidden_states, image_token_mask, adapter_seed, retracing_ratio, overwrite=False):
+    if adapter_seed is None or image_token_mask is None or hidden_states.dim() != 3:
+        return hidden_states, False
+
+    img_mask = image_token_mask
+    if img_mask.dim() > 2:
+        img_mask = img_mask.squeeze(-1)
+    if img_mask.dim() != 2 or img_mask.shape[1] != hidden_states.shape[1]:
+        return hidden_states, False
+
+    img_mask = img_mask.to(device=hidden_states.device, dtype=torch.bool)
+    if not img_mask.any():
+        return hidden_states, False
+
+    current_tokens = hidden_states[img_mask]
+    replacement_tokens = _fit_tensor_to_shape(adapter_seed, current_tokens.shape)
+    if replacement_tokens is None:
+        return hidden_states, False
+
+    replacement_tokens = replacement_tokens.to(device=current_tokens.device, dtype=current_tokens.dtype)
+    if overwrite:
+        mixed_tokens = replacement_tokens
+    else:
+        norm = torch.mean(torch.abs(current_tokens)) / (torch.mean(torch.abs(replacement_tokens)) + 1e-6)
+        mixed_tokens = current_tokens * (1.0 - retracing_ratio) + replacement_tokens * norm * retracing_ratio
+
+    updated_hidden_states = hidden_states.clone()
+    updated_hidden_states[img_mask] = mixed_tokens
+    return updated_hidden_states, True
+
+
+def _install_ffn_adapter(mlp, adapter_seed, retracing_ratio, hidden_states):
+    adapter_seed = _fit_adapter_seed(adapter_seed, hidden_states)
+    if adapter_seed is None:
+        return False
+
+    next_w1_seed = _fit_tensor_to_shape(adapter_seed, mlp.gate_proj.weight.shape)
+    next_w2_seed = _fit_tensor_to_shape(adapter_seed, mlp.up_proj.weight.shape)
+    mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(next_w1_seed))
+    mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(next_w2_seed))
+
+    scale_w1 = torch.mean(torch.abs(mlp.gate_proj.weight)) / (torch.mean(torch.abs(next_w1_seed)) + 1e-6)
+    scale_w2 = torch.mean(torch.abs(mlp.up_proj.weight)) / (torch.mean(torch.abs(next_w2_seed)) + 1e-6)
+    mlp.adpt_w1 += scale_w1 * next_w1_seed
+    mlp.adpt_w2 += scale_w2 * next_w2_seed
+    mlp.retracing_ratio = retracing_ratio
+    mlp.adpt_sign = 1
+    return True
+
 import ipdb
 
 @auto_docstring
@@ -963,6 +1033,9 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         self._memvr_trigger_total = 0
         self._memvr_last_triggered = False
         self._memvr_last_trigger_layer = -1
+        self._memvr_last_target_layer = -1
+        self._memvr_last_entropy = None
+        self._memvr_debug_info = {}
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -1055,9 +1128,20 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
             method = "base"
         if not apply_memvr:
             method = "base"
+        self._memvr_last_triggered = False
+        self._memvr_last_trigger_layer = -1
+        self._memvr_last_target_layer = -1
+        self._memvr_last_entropy = None
         state_drift_threshold = float(getattr(self.layers[0].mlp, "state_drift_threshold", 0.5))
         state_drift_pooling = str(getattr(self.layers[0].mlp, "state_drift_pooling", "mean") or "mean").lower()
         retrace_delay_layers = max(1, int(getattr(self.layers[0].mlp, "retrace_delay_layers", 1)))
+        trigger_strategy = str(getattr(self.layers[0].mlp, "trigger_strategy", "entropy") or "entropy").lower()
+        if trigger_strategy not in {"entropy", "always", "random", "none"}:
+            trigger_strategy = "entropy"
+        random_trigger_prob = float(getattr(self.layers[0].mlp, "random_trigger_prob", 0.5))
+        injection_mode = str(getattr(self.layers[0].mlp, "injection_mode", "ffn") or "ffn").lower()
+        if injection_mode not in {"ffn", "attention", "ffn_attention", "residual"}:
+            injection_mode = "ffn"
         retrace_target_layers_raw = str(getattr(self.layers[0].mlp, "retrace_target_layers", "") or "").strip()
         retrace_target_layers = {
             int(v.strip())
@@ -1071,40 +1155,90 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
         prev_img_state = None
         state_drift_score = 0.0
         state_drift_ready = False
+        pending_attention_layer = -1
+        pending_attention_seed = None
+        pending_residual_layer = -1
+        pending_residual_seed = None
+
+        self._memvr_debug_info = {
+            "enabled": bool(apply_memvr),
+            "method": method,
+            "entropy_threshold": float(entropy_threshold),
+            "retracing_ratio": float(retracing_ratio),
+            "retrace_delay_layers": int(retrace_delay_layers),
+            "starting_layer": int(starting_layer),
+            "ending_layer": int(ending_layer),
+            "triggered": False,
+            "trigger_layer": None,
+            "target_layer": None,
+            "trigger_metric": None,
+            "trigger_value": None,
+            "trigger_source": None,
+            "injection_success": False,
+            "used_dynamic_visual_token": False,
+            "entropy_trace": [],
+        }
 
         layer = 0
         entropy_list = []
 
         for decoder_layer in self.layers:
+            if layer == pending_attention_layer:
+                hidden_states, _ = _inject_into_hidden_states(
+                    hidden_states,
+                    image_token_mask,
+                    pending_attention_seed,
+                    retracing_ratio,
+                    overwrite=False,
+                )
+                pending_attention_layer = -1
+                pending_attention_seed = None
+
+            if layer == pending_residual_layer:
+                hidden_states, _ = _inject_into_hidden_states(
+                    hidden_states,
+                    image_token_mask,
+                    pending_residual_seed,
+                    retracing_ratio,
+                    overwrite=False,
+                )
+                pending_residual_layer = -1
+                pending_residual_seed = None
+
             if use_explicit_layers and layer in retrace_target_layers and dynamic_visual_token is not None:
                 current_mlp = self.layers[layer].mlp
-                current_mlp.adpt_sign = 1
-
                 adapter_seed = dynamic_visual_token
-                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() > 2:
-                    adapter_seed = adapter_seed[0]
-                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() == 1:
-                    adapter_seed = adapter_seed.unsqueeze(0)
-                adapter_seed = adapter_seed.to(dtype=hidden_states.dtype, device=hidden_states.device)
-
-                cur_w1_seed = _fit_tensor_to_shape(adapter_seed, current_mlp.gate_proj.weight.shape)
-                cur_w2_seed = _fit_tensor_to_shape(adapter_seed, current_mlp.up_proj.weight.shape)
-                current_mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(cur_w1_seed))
-                current_mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(cur_w2_seed))
-
-                scale_w1 = torch.mean(torch.abs(current_mlp.gate_proj.weight)) / (
-                    torch.mean(torch.abs(cur_w1_seed)) + 1e-6
-                )
-                scale_w2 = torch.mean(torch.abs(current_mlp.up_proj.weight)) / (
-                    torch.mean(torch.abs(cur_w2_seed)) + 1e-6
-                )
-                current_mlp.adpt_w1 += scale_w1 * cur_w1_seed
-                current_mlp.adpt_w2 += scale_w2 * cur_w2_seed
-                current_mlp.retracing_ratio = retracing_ratio
+                if injection_mode in {"ffn", "ffn_attention"}:
+                    _install_ffn_adapter(current_mlp, adapter_seed, retracing_ratio, hidden_states)
+                if injection_mode in {"attention", "ffn_attention"}:
+                    hidden_states, _ = _inject_into_hidden_states(
+                        hidden_states,
+                        image_token_mask,
+                        adapter_seed,
+                        retracing_ratio,
+                        overwrite=False,
+                    )
+                if injection_mode == "residual":
+                    hidden_states, _ = _inject_into_hidden_states(
+                        hidden_states,
+                        image_token_mask,
+                        adapter_seed,
+                        retracing_ratio,
+                        overwrite=False,
+                    )
 
                 self._memvr_last_triggered = True
                 self._memvr_last_trigger_layer = layer
+                self._memvr_last_target_layer = layer
                 self._memvr_trigger_total += 1
+                self._memvr_debug_info["triggered"] = True
+                self._memvr_debug_info["trigger_layer"] = int(layer)
+                self._memvr_debug_info["target_layer"] = int(layer)
+                self._memvr_debug_info["trigger_metric"] = "explicit_layer"
+                self._memvr_debug_info["trigger_value"] = float(entropy_value) if method == "memvr" else None
+                self._memvr_debug_info["trigger_source"] = "explicit_layers"
+                self._memvr_debug_info["used_dynamic_visual_token"] = bool(dynamic_visual_token is not None)
+                self._memvr_debug_info["injection_success"] = True
 
             hidden_states = decoder_layer(
                 hidden_states,
@@ -1155,14 +1289,15 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                         prev_prev_img_state = prev_img_state
                         prev_img_state = pooled_img_state
 
-            if not apply_memvr or not hasattr(self, "lm_head"):
+            lm_head = getattr(self, "lm_head", None)
+            if lm_head is None:
                 layer += 1
                 continue
 
             entropy_value = 0.0
-            if method == "memvr":
+            if method in {"base", "memvr"}:
                 norm_hidden_states = self.norm(hidden_states)
-                logits = self.lm_head(norm_hidden_states)
+                logits = lm_head(norm_hidden_states)
                 logits = logits[:, -1, :].float()
 
                 top_k = min(10, logits.shape[-1])
@@ -1174,25 +1309,33 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
                     dim=-1,
                 )
                 entropy_value = float(entropy_per_sample.mean().item())
+                self._memvr_last_entropy = entropy_value
+                self._memvr_debug_info["entropy_trace"].append({
+                    "layer": int(layer),
+                    "entropy": float(entropy_value),
+                })
 
             if layer == pending_reset_layer:
                 current_mlp = self.layers[layer].mlp
-                current_mlp.adpt_sign = 0
-                current_mlp.adpt_w1 = None
-                current_mlp.adpt_w2 = None
+                _clear_memvr_adapter(current_mlp)
                 pending_reset_layer = -1
 
             if use_explicit_layers and layer in retrace_target_layers:
                 current_mlp = self.layers[layer].mlp
-                current_mlp.adpt_sign = 0
-                current_mlp.adpt_w1 = None
-                current_mlp.adpt_w2 = None
+                _clear_memvr_adapter(current_mlp)
             
             trigger_hit = False
             if method == "evo":
                 trigger_hit = state_drift_ready and (state_drift_score > state_drift_threshold)
             elif method == "memvr":
-                trigger_hit = entropy_value > entropy_threshold
+                if trigger_strategy == "none":
+                    trigger_hit = False
+                elif trigger_strategy == "always":
+                    trigger_hit = True
+                elif trigger_strategy == "random":
+                    trigger_hit = random.random() < max(0.0, min(1.0, random_trigger_prob))
+                else:
+                    trigger_hit = entropy_value > entropy_threshold
             else:
                 trigger_hit = False
 
@@ -1208,39 +1351,36 @@ class Qwen2_5_VLTextModel(Qwen2_5_VLPreTrainedModel):
             ):  
                 visual_retracing_event = True
                 self._memvr_last_triggered = True
-                self._memvr_last_trigger_layer = layer + retrace_delay_layers
+                self._memvr_last_trigger_layer = layer
+                self._memvr_last_target_layer = layer + retrace_delay_layers
                 self._memvr_trigger_total += 1
+                self._memvr_debug_info["triggered"] = True
+                self._memvr_debug_info["trigger_layer"] = int(layer)
+                self._memvr_debug_info["target_layer"] = int(layer + retrace_delay_layers)
+                self._memvr_debug_info["trigger_metric"] = "entropy" if method == "memvr" else "state_drift"
+                self._memvr_debug_info["trigger_value"] = float(entropy_value if method == "memvr" else state_drift_score)
+                self._memvr_debug_info["trigger_source"] = str(trigger_strategy if method == "memvr" else "evo")
+                self._memvr_debug_info["used_dynamic_visual_token"] = bool((visual_token if method == "memvr" else dynamic_visual_token) is not None)
+                self._memvr_debug_info["injection_success"] = True
 
                 # print(
                 #     f"method={method} trigger_layer={layer} insert_layer={layer + retrace_delay_layers}"
                 # )
 
-                next_mlp = self.layers[layer + retrace_delay_layers].mlp
-                next_mlp.adpt_sign = 1
-                pending_reset_layer = layer + retrace_delay_layers
+                next_layer_idx = layer + retrace_delay_layers
+                next_mlp = self.layers[next_layer_idx].mlp
 
                 # MemVR should inject original visual token; Evo injects current layer image state.
                 adapter_seed = visual_token if method == "memvr" else dynamic_visual_token
-                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() > 2:
-                    adapter_seed = adapter_seed[0]
-                if isinstance(adapter_seed, torch.Tensor) and adapter_seed.dim() == 1:
-                    adapter_seed = adapter_seed.unsqueeze(0)
-                adapter_seed = adapter_seed.to(dtype=hidden_states.dtype, device=hidden_states.device)
-
-                next_w1_seed = _fit_tensor_to_shape(adapter_seed, next_mlp.gate_proj.weight.shape)
-                next_w2_seed = _fit_tensor_to_shape(adapter_seed, next_mlp.up_proj.weight.shape)
-                next_mlp.adpt_w1 = torch.nn.Parameter(torch.zeros_like(next_w1_seed))
-                next_mlp.adpt_w2 = torch.nn.Parameter(torch.zeros_like(next_w2_seed))
-
-                scale_w1 = torch.mean(torch.abs(next_mlp.gate_proj.weight)) / (
-                    torch.mean(torch.abs(next_w1_seed)) + 1e-6
-                )
-                scale_w2 = torch.mean(torch.abs(next_mlp.up_proj.weight)) / (
-                    torch.mean(torch.abs(next_w2_seed)) + 1e-6
-                )
-                next_mlp.adpt_w1 += scale_w1 * next_w1_seed
-                next_mlp.adpt_w2 += scale_w2 * next_w2_seed
-                next_mlp.retracing_ratio = retracing_ratio
+                if injection_mode in {"ffn", "ffn_attention"}:
+                    _install_ffn_adapter(next_mlp, adapter_seed, retracing_ratio, hidden_states)
+                    pending_reset_layer = next_layer_idx
+                if injection_mode in {"attention", "ffn_attention"}:
+                    pending_attention_layer = next_layer_idx
+                    pending_attention_seed = adapter_seed
+                if injection_mode == "residual":
+                    pending_residual_layer = next_layer_idx
+                    pending_residual_seed = adapter_seed
 
             if method == "memvr":
                 entropy_list.append(f"{entropy_value:.3f}")
