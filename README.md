@@ -1,16 +1,6 @@
-Download MM-SkinVL Pre-trained Weights
-
-| Model Name   | Link                                               |
-| ------------ | -------------------------------------------------- |
-| SkinVL-MM    | [Link](https://huggingface.co/zwq803/SkinVL-MM)    |
-| SkinVL-Pub   | [Link](https://huggingface.co/zwq803/SkinVL-Pub)   |
-| SkinVL-PubMM | [Link](https://huggingface.co/zwq803/SkinVL-PubMM) |
 
 
-
-
-
-## Download Pre-training Datasets
+## Download Datasets
 
 | Dataset        | Modality                        | Link                                                         |
 | -------------- | ------------------------------- | ------------------------------------------------------------ |
