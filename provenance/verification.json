@@ -1,0 +1,18 @@
+{
+  "project": "SkinIR",
+  "split_at": "2026-10-13T15:46:00.698151+08:00",
+  "standalone": true,
+  "unit_tests_passed": 5,
+  "entry_help_import_passed": true,
+  "documentation_bash_blocks_syntax_passed": 3,
+  "profile_count": 6,
+  "new_gpu_inference_runs": 0,
+  "historical_full_replay_tested": false,
+  "clean_environment_install_tested": false,
+  "notes": [
+    "Source hashes match selected sanitized combined-package code",
+    "Only this repository is required for its runner, dependencies, configurations and result summary",
+    "Model weights and evaluation data must be separately and lawfully obtained",
+    "Manual license and privacy review remains required"
+  ]
+}

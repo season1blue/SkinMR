@@ -1,0 +1,76 @@
+{
+  "skinir_patch16_full_base": {
+    "family": "skinir",
+    "dataset": "patch16_ir_full",
+    "experiment": "Patch16",
+    "method": "base",
+    "target_layers": "",
+    "batch_size": 8,
+    "entropy_threshold": 0.75,
+    "retracing_ratio": 0.5,
+    "starting_layer": 5,
+    "ending_layer": 16,
+    "seed": 42
+  },
+  "skinir_patch16_full_entropy": {
+    "family": "skinir",
+    "dataset": "patch16_ir_full",
+    "experiment": "Patch16",
+    "method": "memvr",
+    "target_layers": "",
+    "batch_size": 8,
+    "entropy_threshold": 0.6,
+    "retracing_ratio": 0.5,
+    "starting_layer": 5,
+    "ending_layer": 16,
+    "seed": 42
+  },
+  "skinir_patch16_640_base": {
+    "family": "skinir",
+    "dataset": "patch16_ir_640",
+    "experiment": "Patch16",
+    "method": "base",
+    "target_layers": "",
+    "batch_size": 4,
+    "entropy_threshold": 0.75,
+    "retracing_ratio": 0.5,
+    "starting_layer": 5,
+    "ending_layer": 16,
+    "seed": 42
+  },
+  "skinir_patch16_640_layer18": {
+    "family": "skinir",
+    "dataset": "patch16_ir_640",
+    "experiment": "Patch16",
+    "method": "memvr",
+    "target_layers": "18",
+    "batch_size": 4,
+    "entropy_threshold": 0.75,
+    "retracing_ratio": 0.5,
+    "starting_layer": 5,
+    "ending_layer": 16,
+    "seed": 42
+  },
+  "skinvl_patch16_calibrated_base": {
+    "family": "skinvl_engineering",
+    "dataset": "patch16_ir_binary",
+    "method": "base",
+    "threshold": -1.1640625086426735,
+    "entropy_threshold": 0.6,
+    "starting_layer": 5,
+    "ending_layer": 12,
+    "retracing_ratio": 0.1,
+    "seed": 42
+  },
+  "skinvl_patch16_engineering": {
+    "family": "skinvl_engineering",
+    "dataset": "patch16_ir_binary",
+    "method": "memvr",
+    "threshold": -1.1640625086426735,
+    "entropy_threshold": 0.6,
+    "starting_layer": 5,
+    "ending_layer": 12,
+    "retracing_ratio": 0.1,
+    "seed": 42
+  }
+}

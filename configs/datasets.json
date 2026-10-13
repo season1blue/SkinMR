@@ -1,0 +1,60 @@
+{
+  "patch16_ir_full": {
+    "n": 28039,
+    "num_classes": 16,
+    "csv_sha256": "82c634200d754d10259ff91b4692bfe08826a096e83920cace1cf36cc783455b",
+    "labels_observed_in_csv_order": [
+      "nontumor_skin_necrosis_necrosis",
+      "tumor_skin_naevus_naevus",
+      "nontumor_skin_muscle_skeletal",
+      "tumor_skin_epithelial_sqcc",
+      "nontumor_skin_sweatglands_sweatglands",
+      "nontumor_skin_vessel_vessel",
+      "nontumor_skin_elastosis_elastosis",
+      "nontumor_skin_chondraltissue_chondraltissue",
+      "nontumor_skin_hairfollicle_hairfollicle",
+      "nontumor_skin_epidermis_epidermis",
+      "nontumor_skin_nerves_nerves",
+      "nontumor_skin_subcutis_subcutis",
+      "tumor_skin_melanoma_melanoma",
+      "tumor_skin_epithelial_bcc",
+      "nontumor_skin_dermis_dermis",
+      "nontumor_skin_sebaceousglands_sebaceousglands"
+    ],
+    "redistributed": false
+  },
+  "patch16_ir_640": {
+    "n": 640,
+    "num_classes": 16,
+    "csv_sha256": "ba2ffb8bb2dd751bec19ec34002369faa6e10b00d540af3d0585473b5ff32280",
+    "labels_observed_in_csv_order": [
+      "tumor_skin_melanoma_melanoma",
+      "nontumor_skin_necrosis_necrosis",
+      "nontumor_skin_nerves_nerves",
+      "nontumor_skin_hairfollicle_hairfollicle",
+      "nontumor_skin_epidermis_epidermis",
+      "nontumor_skin_dermis_dermis",
+      "nontumor_skin_chondraltissue_chondraltissue",
+      "nontumor_skin_sweatglands_sweatglands",
+      "nontumor_skin_muscle_skeletal",
+      "tumor_skin_epithelial_sqcc",
+      "nontumor_skin_elastosis_elastosis",
+      "nontumor_skin_sebaceousglands_sebaceousglands",
+      "tumor_skin_epithelial_bcc",
+      "tumor_skin_naevus_naevus",
+      "nontumor_skin_subcutis_subcutis",
+      "nontumor_skin_vessel_vessel"
+    ],
+    "redistributed": false
+  },
+  "patch16_ir_binary": {
+    "n": 2804,
+    "num_classes": 2,
+    "csv_sha256": "4afa7dbacd7bee577f544089e9634ea849ee713ec32f6b2bfa6961770a604cda",
+    "labels_observed_in_csv_order": [
+      "nontumor",
+      "tumor"
+    ],
+    "redistributed": false
+  }
+}

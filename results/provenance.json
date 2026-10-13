@@ -1,0 +1,44 @@
+[
+  {
+    "profile": "skinir_patch16_full_base",
+    "metric_source": "SkinIR/result/ccdr/patch16_qwen/base/Patch16_results.csv",
+    "metric_file_sha256": "a5afd7a295cdfaed44821388a006b78f97929299886cce82603eed2e8b045dea",
+    "verification": "Historical aggregate read and integer-count consistency checked; no new full inference"
+  },
+  {
+    "profile": "skinir_patch16_full_entropy",
+    "metric_source": "SkinIR/result/ccdr/patch16_qwen/memvr/Patch16_results.csv",
+    "metric_file_sha256": "e58b7fd753d742fe3eca389c8d3d3adebeb9aa92f9fd812e7b0866fddc6a47dd",
+    "verification": "Historical aggregate read and integer-count consistency checked; no new full inference"
+  },
+  {
+    "profile": "skinir_patch16_640_base",
+    "metric_source": "SkinIR/result/skinir_m/layer_patch16/base/Patch16_results.csv",
+    "metric_file_sha256": "71bbb0dce80acc23c5ec664473760e62462b1ca2b095fb50ce4d8c7f3faab89f",
+    "verification": "Historical aggregate read and integer-count consistency checked; no new full inference"
+  },
+  {
+    "profile": "skinir_patch16_640_layer18",
+    "metric_source": "SkinIR/result/skinir_m/layer_patch16/L18_rr05/Patch16_results.csv",
+    "metric_file_sha256": "3a70d6867648939047fba4efe5f58c8c58e59868e4b00453defee2e29567302f",
+    "verification": "Historical aggregate read and integer-count consistency checked; no new full inference"
+  },
+  {
+    "profile": "skinvl_patch16_candidate_base",
+    "metric_source": "SkinIR/result/skinvl_candidate_pad_patch16_20261005/patch16_2class_candidate_base/Patch16_2class_results.csv",
+    "metric_file_sha256": "46f124b44eaea4e50b7671615045a92c87b82b3afd132a7f9e990eb1a4f78750",
+    "verification": "Historical aggregate read and integer-count consistency checked; no new full inference"
+  },
+  {
+    "profile": "skinvl_patch16_calibrated_base",
+    "metric_source": "SkinIR/result/skinvl_patch16_enhance123_20261006/01_margin/calibrated_margin_result.json",
+    "metric_file_sha256": "7a7888bab29db35e9e52827a6951bb9b56b5282b23d4fd77d09d50fd305b6bfe",
+    "verification": "Historical aggregate read and integer-count consistency checked; no new full inference"
+  },
+  {
+    "profile": "skinvl_patch16_engineering",
+    "metric_source": "SkinIR/result/skinvl_patch16_enhance123_20261006/03_memvr_scan/final_calibrated_result.json",
+    "metric_file_sha256": "b5916f9309ef081d35560bc2e47a1fd4f3e663420e55d9e24d73b96cfb5e2004",
+    "verification": "Historical aggregate read and integer-count consistency checked; no new full inference"
+  }
+]
